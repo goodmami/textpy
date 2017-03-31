@@ -1,0 +1,511 @@
+
+import re
+
+cpdef enum:
+    NOMATCH = -1
+    EOS = -2
+
+
+cdef class Match(object):
+    cdef readonly unicode string
+    cdef readonly int pos, endpos
+    cdef readonly object value
+
+    def __init__(self, unicode s, int pos, int endpos, object value=None):
+        self.string = s
+        self.pos = pos
+        self.endpos = endpos
+        self.value = value
+        # self.lastindex = sum(n.lastindex for n in ast)
+
+    cpdef int start(self, group=0):
+        if group == 0:
+            return self.pos
+        else:
+            return self._groups[group].start()
+
+    cpdef int end(self, group=0):
+        if group == 0:
+            return self.endpos
+        else:
+            return self._groups[group].end()
+
+    cpdef tuple span(self, group=0):
+        if group == 0:
+            return (self.pos, self.endpos)
+        else:
+            return self._groups[group].span()
+
+    cpdef unicode group(self, group=0):
+        if group == 0:
+            start, end = self.pos, self.endpos
+        else:
+            start, end = self._groups[group].span()
+        return self.string[start:end]
+
+
+cdef class Scanner(object):
+    cpdef int scan(self, unicode s, int pos=0) except EOS:
+        try:
+            return self._scan(s, pos)
+        except IndexError:
+            return NOMATCH
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        return NOMATCH
+
+    cpdef int scanpos(self, unicode s, int pos) except EOS:
+        cdef int end = self.scan(s, pos)
+        if end == NOMATCH:
+            return pos
+        return end
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef int end = self.scan(s, pos)
+        if end == NOMATCH:
+            return None
+        else:
+            return Match(s, pos, end, s[pos:end])
+
+
+cdef class Dot(Scanner):
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        s[pos]  # check for IndexError
+        return pos + 1
+
+
+cdef class CharacterClass(Scanner):
+    cdef list _ranges
+    cdef unicode _chars
+    def __init__(self, unicode clsstr):
+        cdef list ranges = [], chars = []
+        cdef int i = 0, n = len(clsstr)
+        while i < n-2:
+            if clsstr[i+1] == u'-':
+                ranges.append((clsstr[i], clsstr[i+2]))
+            else:
+                chars.append(clsstr[i])
+            i += 1
+        # remaining character(s) cannot be ranges
+        while i < n:
+            chars.append(clsstr[i])
+            i += 1
+        self._chars = ''.join(chars)
+        self._ranges = ranges
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Py_UCS4 a, b, c
+        c = s[pos]
+        if c in self._chars:
+            return pos + 1
+        for a, b in self._ranges:
+            if a <= c <= b:
+                return pos + 1
+        return NOMATCH
+
+
+cdef class Literal(Scanner):
+    cdef unicode _x
+    cdef int _xlen
+    def __init__(self, unicode x):
+        self._x = x
+        self._xlen = len(x)
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef int end = pos + self._xlen
+        if s[pos:end] != self._x:
+            return NOMATCH
+        return end
+
+
+cdef class Regex(Scanner):
+    cdef object _regex
+    def __init__(self, object pattern):
+        if hasattr(pattern, 'match'):
+            self._regex = pattern
+        else:
+            self._regex = re.compile(pattern)
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        m = self._regex.match(s, pos=pos)
+        if m is None:
+            return NOMATCH
+        else:
+            return m.end()
+
+
+cdef class Spacing(Scanner):
+    cdef unicode _ws
+    def __init__(self, unicode ws=u' \n\t\r\f\v'):
+        self._ws = ws
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef unicode ws = self._ws
+        try:
+            while s[pos] in ws:
+                pos += 1
+        except IndexError:
+            pass
+        return pos
+
+
+cdef class Integer(Scanner):
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        # [-+]? \d+
+        cdef int numdigits
+        if s[pos] in u'-+':
+            pos += 1
+        numdigits = _scan_digits(s, pos)
+        if numdigits == 0:
+            return NOMATCH
+        return pos + numdigits
+
+
+cdef class Float(Scanner):
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        # one of:
+        #   [-+]? \d+\.\d* ([eE][-+]?\d+)?
+        #   [-+]? \.\d+ ([eE][-+]?\d+)?
+        #   [-+]? \d+ [eE][-+]?\d+
+        # note that bare integers (e.g. 1, -1, etc.) are not accepted
+        cdef Py_UCS4 c
+        cdef int dpos
+
+        if s[pos] in u'-+':  # [-+]?
+            pos += 1
+
+        if s[pos] == u'.':  # \.\d+ ([eE][-+]?\d+)?
+            dpos = _scan_digits(s, pos+1)
+            if dpos == 0:
+                return NOMATCH
+            pos += dpos + 1
+            pos += _scan_exponent(s, pos)
+
+        else:  # other two patterns begin with \d+
+            dpos = _scan_digits(s, pos)
+            if dpos == 0:
+                return NOMATCH
+            pos += dpos
+
+            if s[pos] == u'.':  # \d+\.\d* ([eE][-+]?\d+)?
+                pos += 1
+                pos += _scan_digits(s, pos)
+                pos += _scan_exponent(s, pos)
+
+            else:  # \d+ [eE][-+]?\d+
+                dpos = _scan_exponent(s, pos)
+                if dpos == 0:
+                    return NOMATCH
+                pos += dpos
+        return pos
+
+
+cdef class BoundedString(Scanner):
+    cdef unicode first, last
+    def __init__(self, unicode first, unicode last):
+        self.first = first
+        self.last = last
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef unicode c, a = self.first, b = self.last
+        cdef int alen = len(a), blen = len(b)
+        if s[pos:pos+alen] != a:
+            return NOMATCH
+        pos += alen
+        while s[pos:pos+blen] != b:
+            if s[pos] == u'\\':
+                s[pos+1]  # check for IndexError
+                pos += 2
+            else:
+                pos += 1
+        return pos + blen
+
+
+cdef class Bounded(Scanner):
+    cdef Scanner _lhs, _body, _rhs
+
+    def __init__(self, Scanner lhs, Scanner body, Scanner rhs):
+        self._lhs = lhs
+        self._body = body
+        self._rhs = rhs
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef int end
+        end = self._lhs._scan(s, pos)
+        if end >= 0:
+            end = self._body._scan(s, end)
+            if end >= 0:
+                end = self._rhs._scan(s, end)
+        return end
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef Match m = self._lhs.match(s, pos)
+        cdef Match n
+        if m is not None:
+            m = self._body.match(s, m.endpos)
+            if m is not None:
+                n = self._rhs.match(s, m.endpos)
+                if n is None:
+                    return None
+                m.pos = pos
+                m.endpos = n.endpos
+        return m
+
+
+cdef class Sequence(Scanner):
+    cdef tuple _scanners
+    cdef list _is_group
+    cdef bint _no_groups
+
+    def __init__(self, *scanners):
+        self._scanners = scanners
+        # track which are groups; if none are, sequence is one big group
+        self._is_group = [isinstance(s, Group) for s in scanners]
+        self._no_groups = not any(self._is_group)
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner
+        for scanner in self._scanners:
+            pos = scanner._scan(s, pos)
+            if pos == NOMATCH:
+                break
+        return pos
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef list vals = []
+        cdef object val
+        cdef list is_group = self._is_group
+        cdef int i, end
+        cdef Scanner scanner
+        cdef Match m
+        end = pos
+        for i, scanner in enumerate(self._scanners):
+            m = scanner.match(s, end)
+            if m is None:
+                return None
+            end = m.endpos
+            if is_group[i]:
+                vals.append(m.value)
+        if self._no_groups:
+            val = s[pos:end]
+        else:
+            val = vals
+        return Match(s, pos, end, val)
+
+
+cdef class Choice(Scanner):
+    cdef tuple _scanners
+    cdef list _is_group
+
+    def __init__(self, *scanners):
+        self._scanners = scanners
+        self._is_group = [isinstance(s, Group) for s in scanners]
+        if not any(self._is_group):
+            self._is_group = [True for _ in self._is_group]
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner
+        cdef int end
+        for scanner in self._scanners:
+            end = scanner._scan(s, pos)
+            if end >= 0:
+                return end
+        return NOMATCH
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef object val = None
+        cdef list is_group = self._is_group
+        cdef int i
+        cdef Scanner scanner
+        cdef Match m
+        for i, scanner in enumerate(self._scanners):
+            m = scanner.match(s, pos)
+            if m is not None:
+                if is_group[i]:
+                    val = m.value
+                return Match(s, pos, m.endpos, val)
+        return None
+
+
+cdef class Repeat(Scanner):
+    cdef Scanner _scanner
+    cdef Scanner _delimiter
+    cdef int _min, _max
+    cdef bint _s_is_grp, _d_is_grp
+
+    def __init__(self, Scanner scanner, int min=0, int max=-1,
+                 Scanner delimiter=None):
+        self._scanner = scanner
+        self._min = min
+        self._max = max
+        self._delimiter = delimiter
+        self._s_is_grp = isinstance(scanner, Group)
+        self._d_is_grp = isinstance(delimiter, Group)
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner = self._scanner
+        cdef Scanner delim = self._delimiter
+        cdef int a = self._min, b = self._max, count = 0
+        cdef int newpos
+        try:
+            newpos = scanner._scan(s, pos)
+            while newpos >= 0 and count != b:
+                pos = newpos
+                count += 1
+                if delim is not None:
+                    newpos = delim._scan(s, pos)
+                    if newpos < 0:
+                        break
+                    newpos = scanner._scan(s, newpos)
+                else:
+                    newpos = scanner._scan(s, pos)
+        except IndexError:
+            pass
+        if count >= a:
+            return pos
+        return NOMATCH
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef Scanner scanner = self._scanner
+        cdef Scanner delimiter = self._delimiter
+        cdef bint s_is_grp = self._s_is_grp
+        cdef bint d_is_grp = self._d_is_grp
+        cdef int a = self._min, b = self._max, count = 0, end = pos
+        cdef list vals = []
+        cdef object val
+        cdef Match m
+        try:
+            m = scanner.match(s, end)
+            while m is not None and count != b:
+                end = m.endpos
+                count += 1
+                if s_is_grp:
+                    vals.append(m.value)
+                if delimiter is not None:
+                    m = delimiter.match(s, end)
+                    if m is None:
+                        break
+                    if d_is_grp:
+                        vals.append(m.value)
+                    m = scanner.match(s, m.endpos)
+                else:
+                    m = scanner.match(s, end)
+        except IndexError:
+            pass
+        if count >= a:
+            if not (s_is_grp or d_is_grp):
+                val = s[pos:end]
+            else:
+                val = vals
+            return Match(s, pos, end, val)
+        return None
+
+
+cdef class Nonterminal(Scanner):
+    cdef object _grammar
+    cdef unicode _name
+
+    def __init__(self, object grammar, unicode name):
+        self._grammar = grammar
+        self._name = name
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner
+        scanner = self._grammar[self._name]
+        return scanner._scan(s, pos)
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef Scanner scanner
+        scanner = self._grammar[self._name]
+        return scanner.match(s, pos)
+
+
+
+cdef class Group(Scanner):
+    cdef Scanner _scanner
+    cdef public object action
+
+    def __init__(self, Scanner scanner, object action=None):
+        self._scanner = scanner
+        self.action = action
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef Match m
+        cdef Scanner scanner = self._scanner
+        m = scanner.match(s, pos)
+        if m is None:
+            return None
+        else:
+            value = m.value
+            if self.action is not None:
+                value = self.action(value)
+            return Match(s, pos, m.endpos, value)
+
+
+# utility functions
+
+def split(
+        unicode s not None,
+        unicode sep=u' \t\v\n\f\r',
+        int maxsplit=-1,
+        unicode esc=u'\\',
+        unicode quotes=u'"\''):
+    cdef int start = 0
+    cdef int pos = 0
+    cdef int end = len(s)
+    cdef int numsplit = 0
+    cdef list tokens = []
+    cdef bint in_quotes = False
+    cdef unicode q = u''
+    while pos < end and (maxsplit < 0 or numsplit < maxsplit):
+        c = s[pos]
+        if c in esc:
+            if pos == end-1:
+                raise ValueError('Runaway escape sequence.')
+            pos += 1
+        elif in_quotes is True:
+            if c == q:
+                tokens.append(s[start:pos+1])
+                numsplit += 1
+                start = pos+1
+                in_quotes = False
+        elif c in quotes:
+            if start < pos:
+                tokens.append(s[start:pos])
+                numsplit += 1
+            start = pos
+            q = c
+            in_quotes = True
+        elif c in sep:
+            if start < pos:
+                tokens.append(s[start:pos])
+                numsplit += 1
+            start = pos + 1
+        pos += 1
+    if start < end:
+        tokens.append(s[start:end])
+    return tokens
+
+
+# helper functions
+
+cdef inline int _scan_digits(unicode s, int pos):
+    cdef int i = 0
+    try:
+        while u'0' <= s[pos+i] <= u'9':
+            i += 1
+    except IndexError:
+        pass
+    return i
+
+
+cdef inline bint _scan_exponent(unicode s, int pos):
+    cdef int numdigits = 0
+    try:
+        if s[pos] in u'eE':
+            if s[pos+1] in '-+':
+                numdigits = _scan_digits(s, pos+2)
+                if numdigits > 0:
+                    return numdigits + 2
+            else:
+                numdigits = _scan_digits(s, pos+1)
+                if numdigits > 0:
+                    return numdigits + 1
+    except IndexError:
+        pass
+    return 0
