@@ -98,6 +98,9 @@ class Match(object):
 
 
 class py_Scanner(object):
+    grouped = False
+    action = None
+
     def scan(self, s, pos=0):
         try:
             return self._scan(s, pos)
@@ -111,12 +114,18 @@ class py_Scanner(object):
         return end
 
     def match(self, s, pos=0):
-        end = self.scan(s, pos)
-        if end == NOMATCH:
+        try:
+            end = self._scan(s, pos)
+            if end == NOMATCH:
+                return None
+            else:
+                val = s[pos:end]
+                action = self.action
+                if action is not None:
+                    val = action(val)
+                return Match(s, pos, end, val)
+        except IndexError:
             return None
-        else:
-            return Match(s, pos, end, s[pos:end])
-
 
 class py_Dot(py_Scanner):
     def _scan(self, s, pos):
@@ -269,24 +278,27 @@ class py_Bounded(py_Scanner):
         return end
 
     def match(self, s, pos=0):
-        m = self._lhs.match(s, pos)
-        if m is not None:
-            m = self._body.match(s, m.endpos)
+        end = self._lhs._scan(s, pos)
+        m = None
+        if end >= 0:
+            m = self._body.match(s, end)
             if m is not None:
-                n = self._rhs.match(s, m.endpos)
-                if n is None:
-                    return None
-                m.pos = pos
-                m.endpos = n.endpos
+                end = self._rhs._scan(s, m.endpos)
+                if end < 0:
+                    m = None
+                else:
+                    action = self.action
+                    if action is not None:
+                        m.value = action(m.value)
+                    m.pos = pos
+                    m.endpos = end
         return m
 
 
 class py_Sequence(py_Scanner):
     def __init__(self, *scanners):
         self._scanners = scanners
-        # track which are groups; if none are, sequence is one big group
-        self._is_group = [isinstance(s, Group) for s in scanners]
-        self._no_groups = not any(self._is_group)
+        self._no_groups = not any(s.grouped for s in scanners)
 
     def _scan(self, s, pos):
         for scanner in self._scanners:
@@ -296,27 +308,30 @@ class py_Sequence(py_Scanner):
         return pos
 
     def match(self, s, pos=0):
-        vals = []
-        is_group = self._is_group
+        val = []
         end = pos
-        for i, scanner in enumerate(self._scanners):
-            m = scanner.match(s, end)
-            if m is None:
-                return None
-            end = m.endpos
-            if is_group[i]:
-                vals.append(m.value)
+        for scanner in self._scanners:
+            if scanner.grouped:
+                m = scanner.match(s, end)
+                if m is None:
+                    return None
+                end = m.endpos
+                val.append(m.value)
+            else:
+                end = scanner._scan(s, end)
+                if end == NOMATCH:
+                    return None
         if self._no_groups:
-            vals = s[pos:end]
-        return Match(s, pos, end, vals)
+            val = s[pos:end]
+        action = self.action
+        if action is not None:
+            val = action(val)
+        return Match(s, pos, end, val)
 
 
 class py_Choice(py_Scanner):
     def __init__(self, *scanners):
         self._scanners = scanners
-        self._is_group = [isinstance(s, Group) for s in scanners]
-        if not any(self._is_group):
-            self._is_group = [True for _ in self._is_group]
 
     def _scan(self, s, pos):
         for scanner in self._scanners:
@@ -327,13 +342,13 @@ class py_Choice(py_Scanner):
 
     def match(self, s, pos=0):
         val = None
-        is_group = self._is_group
-        for i, scanner in enumerate(self._scanners):
+        for scanner in self._scanners:
             m = scanner.match(s, pos)
             if m is not None:
-                if is_group[i]:
-                    val = m.value
-                return Match(s, pos, m.endpos, val)
+                action = self.action
+                if action is not None:
+                    m.value = action(m.value)
+                return m
         return None
 
 
@@ -343,8 +358,6 @@ class py_Repeat(py_Scanner):
         self._min = min
         self._max = max
         self._delimiter = delimiter
-        self._is_group = [isinstance(x, Group) for x in (scanner, delimiter)]
-        self._no_groups = not any(self._is_group)
 
     def _scan(self, s, pos):
         scanner, delimiter = self._scanner, self._delimiter
@@ -370,10 +383,10 @@ class py_Repeat(py_Scanner):
 
     def match(self, s, pos=0):
         scanner, delimiter = self._scanner, self._delimiter
-        s_is_grp, d_is_grp = self._is_group
+        s_is_grp, d_is_grp = scanner.grouped, delimiter.grouped
         a, b = self._min, self._max
         count = 0
-        vals = []
+        val = []
         end = pos
         try:
             m = scanner.match(s, end)
@@ -381,22 +394,30 @@ class py_Repeat(py_Scanner):
                 end = m.endpos
                 count += 1
                 if s_is_grp:
-                    vals.append(m.value)
+                    val.append(m.value)
                 if delimiter is not None:
-                    m = delimiter.match(s, end)
-                    if m is None:
-                        break
                     if d_is_grp:
-                        vals.append(m.value)
-                    m = scanner.match(s, m.endpos)
+                        m = delimiter.match(s, end)
+                        if m is None:
+                            break
+                        d_end = m.endpos
+                        val.append(m.value)
+                    else:
+                        d_end = delimiter._scan(s, end)
+                        if d_end == NOMATCH:
+                            break
+                    m = scanner.match(s, d_end)
                 else:
                     m = scanner.match(s, end)
         except IndexError:
             pass
         if count >= a:
-            if self._no_groups:
-                vals = s[pos:end]
-            return Match(s, pos, end, vals)
+            if not (s_is_grp or d_is_grp):
+                val = s[pos:end]
+            action = self.action
+            if action is not None:
+                val = action(val)
+            return Match(s, pos, end, val)
         return None
 
 
@@ -411,26 +432,17 @@ class py_Nonterminal(py_Scanner):
 
     def match(self, s, pos=0):
         scanner = self._grammar[self._name]
-        return scanner.match(s, pos)
+        m = scanner.match(s, pos)
+        action = self.action
+        if action is not None:
+            m.value = action(m.value)
+        return m
 
 
-class py_Group(py_Scanner):
-    def __init__(self, scanner, action=None):
-        self._scanner = scanner
-        self.action = action
-
-    def _scan(self, s, pos):
-        return self._scanner._scan(s, pos)
-
-    def match(self, s, pos=0):
-        m = self._scanner.match(s, pos)
-        if m is None:
-            return None
-        else:
-            value = m.value
-            if self.action is not None:
-                value = self.action(value)
-            return Match(s, pos, m.endpos, value)
+def py_Group(scanner, action=None):
+    scanner.grouped = True
+    scanner.action = action
+    return scanner
 
 
 # use fast versions if available

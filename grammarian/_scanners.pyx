@@ -45,6 +45,9 @@ cdef class Match(object):
 
 
 cdef class Scanner(object):
+    cdef public bint grouped
+    cdef public object action
+
     cpdef int scan(self, unicode s, int pos=0) except EOS:
         try:
             return self._scan(s, pos)
@@ -62,10 +65,17 @@ cdef class Scanner(object):
 
     cpdef Match match(self, unicode s, int pos=0):
         cdef int end = self.scan(s, pos)
-        if end == NOMATCH:
+        cdef object action = self.action
+        try:
+            if end == NOMATCH:
+                return None
+            else:
+                if action is not None:
+                    return Match(s, pos, end, action(s[pos:end]))
+                else:
+                    return Match(s, pos, end, s[pos:end])
+        except IndexError:
             return None
-        else:
-            return Match(s, pos, end, s[pos:end])
 
 
 cdef class Dot(Scanner):
@@ -234,29 +244,31 @@ cdef class Bounded(Scanner):
         return end
 
     cpdef Match match(self, unicode s, int pos=0):
-        cdef Match m = self._lhs.match(s, pos)
-        cdef Match n
-        if m is not None:
-            m = self._body.match(s, m.endpos)
-            if m is not None:
-                n = self._rhs.match(s, m.endpos)
-                if n is None:
-                    return None
-                m.pos = pos
-                m.endpos = n.endpos
+        cdef object action = self.action
+        cdef Match m
+        cdef int end = self._lhs._scan(s, pos)
+        if end == NOMATCH:
+            return None
+        m = self._body.match(s, end)
+        if m is None:
+            return None
+        end = self._rhs._scan(s, m.endpos)
+        if end == NOMATCH:
+            return None
+        if action is not None:
+            m.value = action(m.value)
+        m.pos = pos
+        m.endpos = end
         return m
 
 
 cdef class Sequence(Scanner):
     cdef tuple _scanners
-    cdef list _is_group
     cdef bint _no_groups
 
     def __init__(self, *scanners):
         self._scanners = scanners
-        # track which are groups; if none are, sequence is one big group
-        self._is_group = [isinstance(s, Group) for s in scanners]
-        self._no_groups = not any(self._is_group)
+        self._no_groups = not any(s.grouped for s in scanners)
 
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner
@@ -267,36 +279,37 @@ cdef class Sequence(Scanner):
         return pos
 
     cpdef Match match(self, unicode s, int pos=0):
+        cdef object action = self.action
         cdef list vals = []
         cdef object val
-        cdef list is_group = self._is_group
-        cdef int i, end
+        cdef int end = pos
         cdef Scanner scanner
         cdef Match m
-        end = pos
-        for i, scanner in enumerate(self._scanners):
-            m = scanner.match(s, end)
-            if m is None:
-                return None
-            end = m.endpos
-            if is_group[i]:
+        for scanner in self._scanners:
+            if scanner.grouped:
+                m = scanner.match(s, end)
+                if m is None:
+                    return None
+                end = m.endpos
                 vals.append(m.value)
+            else:
+                end = scanner._scan(s, end)
+                if end == NOMATCH:
+                    return None
         if self._no_groups:
             val = s[pos:end]
         else:
             val = vals
+        if action is not None:
+            val = action(val)
         return Match(s, pos, end, val)
 
 
 cdef class Choice(Scanner):
     cdef tuple _scanners
-    cdef list _is_group
 
     def __init__(self, *scanners):
         self._scanners = scanners
-        self._is_group = [isinstance(s, Group) for s in scanners]
-        if not any(self._is_group):
-            self._is_group = [True for _ in self._is_group]
 
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner
@@ -308,17 +321,16 @@ cdef class Choice(Scanner):
         return NOMATCH
 
     cpdef Match match(self, unicode s, int pos=0):
+        cdef object action = self.action
         cdef object val = None
-        cdef list is_group = self._is_group
-        cdef int i
         cdef Scanner scanner
         cdef Match m
-        for i, scanner in enumerate(self._scanners):
+        for scanner in self._scanners:
             m = scanner.match(s, pos)
             if m is not None:
-                if is_group[i]:
-                    val = m.value
-                return Match(s, pos, m.endpos, val)
+                if action is not None:
+                    m.value = action(m.value)
+                return m
         return None
 
 
@@ -326,7 +338,6 @@ cdef class Repeat(Scanner):
     cdef Scanner _scanner
     cdef Scanner _delimiter
     cdef int _min, _max
-    cdef bint _s_is_grp, _d_is_grp
 
     def __init__(self, Scanner scanner, int min=0, int max=-1,
                  Scanner delimiter=None):
@@ -334,8 +345,6 @@ cdef class Repeat(Scanner):
         self._min = min
         self._max = max
         self._delimiter = delimiter
-        self._s_is_grp = isinstance(scanner, Group)
-        self._d_is_grp = isinstance(delimiter, Group)
 
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner = self._scanner
@@ -361,10 +370,11 @@ cdef class Repeat(Scanner):
         return NOMATCH
 
     cpdef Match match(self, unicode s, int pos=0):
+        cdef object action = self.action
         cdef Scanner scanner = self._scanner
         cdef Scanner delimiter = self._delimiter
-        cdef bint s_is_grp = self._s_is_grp
-        cdef bint d_is_grp = self._d_is_grp
+        cdef bint s_is_grp = scanner.grouped
+        cdef bint d_is_grp = delimiter.grouped
         cdef int a = self._min, b = self._max, count = 0, end = pos
         cdef list vals = []
         cdef object val
@@ -377,12 +387,17 @@ cdef class Repeat(Scanner):
                 if s_is_grp:
                     vals.append(m.value)
                 if delimiter is not None:
-                    m = delimiter.match(s, end)
-                    if m is None:
-                        break
                     if d_is_grp:
+                        m = delimiter.match(s, end)
+                        if m is None:
+                            break
+                        d_end = m.endpos
                         vals.append(m.value)
-                    m = scanner.match(s, m.endpos)
+                    else:
+                        d_end = delimiter._scan(s, end)
+                        if d_end == NOMATCH:
+                            break
+                    m = scanner.match(s, d_end)
                 else:
                     m = scanner.match(s, end)
         except IndexError:
@@ -392,6 +407,8 @@ cdef class Repeat(Scanner):
                 val = s[pos:end]
             else:
                 val = vals
+            if action is not None:
+                val = action(val)
             return Match(s, pos, end, val)
         return None
 
@@ -410,31 +427,18 @@ cdef class Nonterminal(Scanner):
         return scanner._scan(s, pos)
 
     cpdef Match match(self, unicode s, int pos=0):
-        cdef Scanner scanner
-        scanner = self._grammar[self._name]
-        return scanner.match(s, pos)
+        cdef object action = self.action
+        cdef Scanner scanner = self._grammar[self._name]
+        cdef Match m = scanner.match(s, pos)
+        if action is not None:
+            m.value = action(m.value)
+        return m
 
 
-
-cdef class Group(Scanner):
-    cdef Scanner _scanner
-    cdef public object action
-
-    def __init__(self, Scanner scanner, object action=None):
-        self._scanner = scanner
-        self.action = action
-
-    cpdef Match match(self, unicode s, int pos=0):
-        cdef Match m
-        cdef Scanner scanner = self._scanner
-        m = scanner.match(s, pos)
-        if m is None:
-            return None
-        else:
-            value = m.value
-            if self.action is not None:
-                value = self.action(value)
-            return Match(s, pos, m.endpos, value)
+cpdef Scanner Group(Scanner scanner, object action=None):
+    scanner.grouped = True
+    scanner.action = action
+    return scanner
 
 
 # utility functions

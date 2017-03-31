@@ -53,8 +53,8 @@ Comma = Literal(',')
 WS = Spacing()
 Object = Group(
     Bounded(
-        Sequence(Literal('{'), WS),
-        Repeat(Group(Sequence(WS, Group(Str), WS, Literal(':'), WS,
+        Sequence(Literal('{')),
+        Repeat(Group(Sequence(WS, Str, WS, Literal(':'), WS,
                               Group(Nonterminal(grm, 'Value')), WS)),
                delimiter=Comma),
         Sequence(Literal('}'))
@@ -117,6 +117,11 @@ if __name__ == '__main__':
         }
     }'''
     assert Json.match(s) is not None
+    assert Json.match(s).value == {
+        'bool': [True, False],
+        'number': {'float': -0.14e3, 'int': 1},
+        'other': {'string': 'string', 'unicode': 'あ', 'null': None}
+    }
     import timeit
     print(
         'grammarian',
@@ -134,3 +139,5 @@ if __name__ == '__main__':
             number=10000
         )
     )
+    import cProfile
+    cProfile.run('[Json.match(s) for i in range(100)]', 'stats')
