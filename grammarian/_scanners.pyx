@@ -1,5 +1,6 @@
 
 import re
+from functools import partial
 
 cpdef enum:
     NOMATCH = -1
@@ -45,7 +46,7 @@ cdef class Match(object):
 
 
 cdef class Scanner(object):
-    cdef public bint grouped
+    cdef public bint capturing
     cdef public object action
 
     cpdef int scan(self, unicode s, int pos=0) except EOS:
@@ -76,6 +77,15 @@ cdef class Scanner(object):
                     return Match(s, pos, end, s[pos:end])
         except IndexError:
             return None
+
+    cpdef void set_grammar(self, object g):
+        if hasattr(self, '_scanner'):
+            self._scanner.set_grammar(g)
+        if hasattr(self, '_delimiter') and self._delimiter is not None:
+            self._delimiter.set_grammar(g)
+        if hasattr(self, '_scanners'):
+            for scanner in self._scanners:
+                scanner.set_grammar(g)
 
 
 cdef class Dot(Scanner):
@@ -264,11 +274,10 @@ cdef class Bounded(Scanner):
 
 cdef class Sequence(Scanner):
     cdef tuple _scanners
-    cdef bint _no_groups
 
     def __init__(self, *scanners):
         self._scanners = scanners
-        self._no_groups = not any(s.grouped for s in scanners)
+        self.capturing = any(s.capturing for s in scanners)
 
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner
@@ -286,17 +295,20 @@ cdef class Sequence(Scanner):
         cdef Scanner scanner
         cdef Match m
         for scanner in self._scanners:
-            if scanner.grouped:
+            if scanner.capturing:
                 m = scanner.match(s, end)
                 if m is None:
                     return None
                 end = m.endpos
-                vals.append(m.value)
+                if scanner.action is None:
+                    vals.extend(m.value)
+                else:
+                    vals.append(m.value)
             else:
                 end = scanner._scan(s, end)
                 if end == NOMATCH:
                     return None
-        if self._no_groups:
+        if not self.capturing:
             val = s[pos:end]
         else:
             val = vals
@@ -310,6 +322,7 @@ cdef class Choice(Scanner):
 
     def __init__(self, *scanners):
         self._scanners = scanners
+        self.capturing = any(s.capturing for s in scanners)
 
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner
@@ -373,8 +386,8 @@ cdef class Repeat(Scanner):
         cdef object action = self.action
         cdef Scanner scanner = self._scanner
         cdef Scanner delimiter = self._delimiter
-        cdef bint s_is_grp = scanner.grouped
-        cdef bint d_is_grp = delimiter.grouped
+        cdef bint s_is_grp = scanner.capturing
+        cdef bint d_is_grp = delimiter.capturing
         cdef int a = self._min, b = self._max, count = 0, end = pos
         cdef list vals = []
         cdef object val
@@ -385,14 +398,20 @@ cdef class Repeat(Scanner):
                 end = m.endpos
                 count += 1
                 if s_is_grp:
-                    vals.append(m.value)
+                    if scanner.action is None:
+                        vals.extend(m.value)
+                    else:
+                        vals.append(m.value)
                 if delimiter is not None:
                     if d_is_grp:
                         m = delimiter.match(s, end)
                         if m is None:
                             break
                         d_end = m.endpos
-                        vals.append(m.value)
+                        if delimiter.action is None:
+                            vals.extend(m.value)
+                        else:
+                            vals.append(m.value)
                     else:
                         d_end = delimiter._scan(s, end)
                         if d_end == NOMATCH:
@@ -413,6 +432,59 @@ cdef class Repeat(Scanner):
         return None
 
 
+cdef class Optional(Scanner):
+    cdef Scanner _scanner
+    cdef object _default
+
+    def __init__(self, Scanner scanner, object default=...):
+        self._scanner = scanner
+        if default is Ellipsis:
+            self._default = [] if scanner.capturing else ''
+        else:
+            self._default = default
+        self.capturing = scanner.capturing
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner = self._scanner
+        return scanner._scan(s, pos)
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef Scanner scanner = self._scanner
+        cdef object default = self._default
+        cdef Match m
+        m = scanner.match(s, pos)
+        if m is None:
+            return Match(s, pos, pos, default)
+        else:
+            return m
+
+
+cdef class Lookahead(Scanner):
+    cdef Scanner _scanner
+    def __init__(self, Scanner scanner):
+        self._scanner = scanner
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner = self._scanner
+        if scanner._scan(s, pos) == NOMATCH:
+            return NOMATCH
+        else:
+            return pos
+
+
+cdef class NegativeLookahead(Scanner):
+    cdef Scanner _scanner
+    def __init__(self, Scanner scanner):
+        self._scanner = scanner
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner = self._scanner
+        if scanner._scan(s, pos) == NOMATCH:
+            return pos
+        else:
+            return NOMATCH
+
+
 cdef class Nonterminal(Scanner):
     cdef object _grammar
     cdef unicode _name
@@ -424,6 +496,11 @@ cdef class Nonterminal(Scanner):
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner
         scanner = self._grammar[self._name]
+        if scanner is None:
+            raise Exception(
+                'Nonterminal {} is not associated with a grammar'
+                .format(self._name)
+            )
         return scanner._scan(s, pos)
 
     cpdef Match match(self, unicode s, int pos=0):
@@ -434,11 +511,32 @@ cdef class Nonterminal(Scanner):
             m.value = action(m.value)
         return m
 
+    cpdef void set_grammar(self, object g):
+        self._grammar = g
 
-cpdef Scanner Group(Scanner scanner, object action=None):
-    scanner.grouped = True
-    scanner.action = action
-    return scanner
+cdef class Group(Scanner):
+    cdef Scanner _scanner
+
+    def __init__(self, Scanner scanner, object action=None):
+        self._scanner = scanner
+        self.action = action
+        self.capturing = True
+
+    cdef int _scan(self, unicode s, int pos) except EOS:
+        cdef Scanner scanner = self._scanner
+        return scanner._scan(s, pos)
+
+    cpdef Match match(self, unicode s, int pos=0):
+        cdef Scanner scanner = self._scanner
+        cdef object action = self.action
+        cdef Match m
+        m = scanner.match(s, pos)
+        if m is not None:
+            if action is None:
+                m.value = [m.value]
+            else:
+                m.value = action(m.value)
+        return m
 
 
 # utility functions

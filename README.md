@@ -43,6 +43,7 @@ yet implemented, and not all features below have a function equivalent.
 | ------------ | ------------------------------------------------ |
 | `X < ...`    | Rule `X` returns a list                          |
 | `X = ...`    | Rule `X` returns an item                         |
+| `.`          | dot; matches any single character                |
 | `"..."`      | string                                           |
 | `[...]`      | character class                                  |
 | `/.../`      | regular expression                               |
@@ -81,11 +82,11 @@ ordered-choices. Here are some examples:
 | `"a"`                     | `abc`     | `'a'`                         |
 | `("a")`                   | `abc`     | `['a']`                       |
 | `(("a"))`                 | `abc`     | `[['a']]`                     |
-| `"a" "b"`                 | `abc`     | `['ab']`                      |
+| `"a" "b"`                 | `abc`     | `'ab'`                        |
 | `("a" "b") "c"`           | `abc`     | `['ab']`                      |
 | `"a" ("b") "c"`           | `abc`     | `['b']`                       |
-| `"a" / "b"`               | `a`       | `['a']`                       |
-| ...                       | `b`       | `['b']`                       |
+| `"a" / "b"`               | `a`       | `'a'`                         |
+| ...                       | `b`       | `'b'`                         |
 | `"a" / ("b")`             | `a`       | `[]`                          |
 | ...                       | `b`       | `['b']`                       |
 | `(("a")":"("b"))`         | `a:ba:b`  | `[['a','b']]`                 |
@@ -95,3 +96,26 @@ ordered-choices. Here are some examples:
 | `("a" ":" "b"){:","}`     | `a:b,a:b` | `[['a:b'],['a:b']]`           |
 | `(("a")":"("b")){:","}`   | `a:b,a:b` | `[['a','b'],['a','b']]`       |
 | `(("a")":"("b")){:(",")}` | `a:b,a:b` | `[['a','b'],[','],['a','b']]` |
+
+```python
+>>> # "a"
+>>> Literal('a').match('abc').value
+'a'
+>>> # ("a")
+>>> Group(Literal('a')).match('abc').value
+['a']
+>>> # (("a"))
+>>> Group(Group(Literal('a'))).match('abc').value
+[['a']]
+>>> # "a" "b"
+>>> Sequence(Literal('a'), Literal('b')).match('abc').value
+'ab'
+>>> # ("a" "b") "c"
+>>> Sequence(Group(Sequence(Literal('a'), Literal('b'))),
+...          Literal('c')).match('abc').value
+['ab']
+>>> # "a" ("b") "c"
+>>> Sequence(Literal('a'), Group(Literal('b')), Literal('c')) \
+...     .match('abc').value
+['b']
+```

@@ -47,6 +47,10 @@ pycytime(['Repeat','CharacterClass'], '{1}(" \\n\\t\\r\\f\\v")', '"   \\n\\tabc"
 pycytime(['Regex'], '"\\s+"', '"   \\n\\tabc"')
 
 print()
+pycytime(['Sequence','Literal','Spacing'], '{1}("("),{2}()', '"(   xyz"')
+pycytime(['Regex'], '"\(\s*"', '"(   xyz"')
+
+print()
 pycytime(['Repeat','Literal'], '{1}("abc"),min=1,max=3', '"abcabcabc"')
 pycytime(['Regex'], 'r"(?:abc){{1,3}}"', '"abcabcabc"')
 

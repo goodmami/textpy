@@ -160,6 +160,45 @@ def test_Spacing():
         assert spacing.scan('\t\n\r\f\v a') == 6
 
 
+def test_Group():
+    for prefix in ('c', 'py'):
+        grp = getattr(scanners, prefix + '_Group')
+        seq = getattr(scanners, prefix + '_Sequence')
+        lit = getattr(scanners, prefix + '_Literal')
+        rep = getattr(scanners, prefix + '_Repeat')
+        a = lit('a')
+        b = lit('b')
+        assert a.match('a').value == 'a'
+        assert grp(a).match('a').value == ['a']
+        assert grp(grp(a)).match('a').value == [['a']]
+        assert seq(a, b).match('ab').value == 'ab'
+        assert seq(grp(a), grp(b)).match('ab').value == ['a', 'b']
+        assert grp(seq(a, b)).match('ab').value == ['ab']
+        assert grp(seq(grp(a), grp(b))).match('ab').value == [['a', 'b']]
+        assert seq(a, grp(b)).match('ab').value == ['b']
+        # (?: "a" ("b")) "a"
+        assert seq(seq(a, grp(b)), a).match('aba').value == ['b']
+        # ("a"){:" "}
+        assert rep(grp(a), delimiter=lit(' ')).match('a a').value == ['a', 'a']
+        # (("a")){:" "}
+        assert rep(grp(grp(a)), delimiter=lit(' ')).match('a a').value == [['a'], ['a']]
+
+
+def test_Optional():
+    for prefix in ('c', 'py'):
+        opt = getattr(scanners, prefix + '_Optional')
+        grp = getattr(scanners, prefix + '_Group')
+        lit = getattr(scanners, prefix + '_Literal')
+        a = lit('a')
+        assert opt(a).match('a').value == 'a'
+        assert opt(a).match('b').value == ''
+        assert opt(a, default=None).match('b').value is None
+        assert opt(grp(a)).match('a').value == ['a']
+        assert opt(grp(a)).match('b').value == []
+        assert opt(grp(a), default=None).match('b').value == None
+
+
+
 # def test_sequence():
 #     assert s.sequence(s.Integer)('a') is None
 

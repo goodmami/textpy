@@ -1,6 +1,6 @@
 
 import re
-
+from functools import partial
 
 __all__ = [
     'Match',
@@ -17,6 +17,11 @@ __all__ = [
     'Sequence',
     'Choice',
     'Repeat',
+    'ZeroOrMore',
+    'OneOrMore',
+    'Optional',
+    'Lookahead',
+    'NegativeLookahead',
     'Nonterminal',
     'Group',
     'split',
@@ -24,40 +29,44 @@ __all__ = [
 
 try:
     from grammarian._scanners import (
-        Match           as c_Match,
-        Scanner         as c_Scanner,
-        Nonterminal     as c_Nonterminal,
-        Group           as c_Group,
-        Bounded         as c_Bounded,
-        Repeat          as c_Repeat,
-        Dot             as c_Dot,
-        CharacterClass  as c_CharacterClass,
-        Literal         as c_Literal,
-        BoundedString   as c_BoundedString,
-        Sequence        as c_Sequence,
-        Choice          as c_Choice,
-        Spacing         as c_Spacing,
-        Integer         as c_Integer,
-        Float           as c_Float,
-        Regex           as c_Regex
+        Scanner             as c_Scanner,
+        Dot                 as c_Dot,
+        CharacterClass      as c_CharacterClass,
+        Literal             as c_Literal,
+        Regex               as c_Regex,
+        Spacing             as c_Spacing,
+        Integer             as c_Integer,
+        Float               as c_Float,
+        BoundedString       as c_BoundedString,
+        Bounded             as c_Bounded,
+        Sequence            as c_Sequence,
+        Choice              as c_Choice,
+        Repeat              as c_Repeat,
+        Optional            as c_Optional,
+        Lookahead           as c_Lookahead,
+        NegativeLookahead   as c_NegativeLookahead,
+        Nonterminal         as c_Nonterminal,
+        Group               as c_Group,
     )
 except ImportError:
-    c_Match         = None
-    c_Scanner       = None
-    c_Nonterminal   = None
-    c_Group         = None
-    c_Bounded       = None
-    c_Repeat        = None
-    c_Dot           = None
-    c_CharacterClass= None
-    c_Literal       = None
-    c_BoundedString = None
-    c_Sequence      = None
-    c_Choice        = None
-    c_Spacing       = None
-    c_Integer       = None
-    c_Float         = None
-    c_Regex         = None
+    Scanner             = None
+    Dot                 = None
+    CharacterClass      = None
+    Literal             = None
+    Regex               = None
+    Spacing             = None
+    Integer             = None
+    Float               = None
+    BoundedString       = None
+    Bounded             = None
+    Sequence            = None
+    Choice              = None
+    Repeat              = None
+    Optional            = None
+    Lookahead           = None
+    NegativeLookahead   = None
+    Nonterminal         = None
+    Group               = None
 
 NOMATCH = -1
 EOS = -2
@@ -98,7 +107,7 @@ class Match(object):
 
 
 class py_Scanner(object):
-    grouped = False
+    capturing = False
     action = None
 
     def scan(self, s, pos=0):
@@ -126,6 +135,15 @@ class py_Scanner(object):
                 return Match(s, pos, end, val)
         except IndexError:
             return None
+
+    def set_grammar(self, g):
+        if hasattr(self, '_scanner'):
+            self._scanner.set_grammar(g)
+        if hasattr(self, '_delimiter') and self._delimiter is not None:
+            self._delimiter.set_grammar(g)
+        if hasattr(self, '_scanners'):
+            for scanner in self._scanners:
+                scanner.set_grammar(g)
 
 class py_Dot(py_Scanner):
     def _scan(self, s, pos):
@@ -298,7 +316,7 @@ class py_Bounded(py_Scanner):
 class py_Sequence(py_Scanner):
     def __init__(self, *scanners):
         self._scanners = scanners
-        self._no_groups = not any(s.grouped for s in scanners)
+        self.capturing = any(s.capturing for s in scanners)
 
     def _scan(self, s, pos):
         for scanner in self._scanners:
@@ -311,17 +329,20 @@ class py_Sequence(py_Scanner):
         val = []
         end = pos
         for scanner in self._scanners:
-            if scanner.grouped:
+            if scanner.capturing:
                 m = scanner.match(s, end)
                 if m is None:
                     return None
                 end = m.endpos
-                val.append(m.value)
+                if scanner.action is None:
+                    val.extend(m.value)
+                else:
+                    val.append(m.value)
             else:
                 end = scanner._scan(s, end)
                 if end == NOMATCH:
                     return None
-        if self._no_groups:
+        if not self.capturing:
             val = s[pos:end]
         action = self.action
         if action is not None:
@@ -332,6 +353,7 @@ class py_Sequence(py_Scanner):
 class py_Choice(py_Scanner):
     def __init__(self, *scanners):
         self._scanners = scanners
+        self.capturing = any(s.capturing for s in scanners)
 
     def _scan(self, s, pos):
         for scanner in self._scanners:
@@ -383,7 +405,8 @@ class py_Repeat(py_Scanner):
 
     def match(self, s, pos=0):
         scanner, delimiter = self._scanner, self._delimiter
-        s_is_grp, d_is_grp = scanner.grouped, delimiter.grouped
+        s_is_grp = scanner.capturing
+        d_is_grp = delimiter.capturing if delimiter is not None else False
         a, b = self._min, self._max
         count = 0
         val = []
@@ -394,14 +417,20 @@ class py_Repeat(py_Scanner):
                 end = m.endpos
                 count += 1
                 if s_is_grp:
-                    val.append(m.value)
+                    if scanner.action is None:
+                        val.extend(m.value)
+                    else:
+                        val.append(m.value)
                 if delimiter is not None:
                     if d_is_grp:
                         m = delimiter.match(s, end)
                         if m is None:
                             break
                         d_end = m.endpos
-                        val.append(m.value)
+                        if delimiter.action is None:
+                            val.extend(m.value)
+                        else:
+                            val.append(m.value)
                     else:
                         d_end = delimiter._scan(s, end)
                         if d_end == NOMATCH:
@@ -421,6 +450,52 @@ class py_Repeat(py_Scanner):
         return None
 
 
+class py_Optional(py_Scanner):
+    def __init__(self, scanner, default=...):
+        self._scanner = scanner
+        if default is Ellipsis:
+            self._default = [] if scanner.capturing else ''
+        else:
+            self._default = default
+        self.capturing = scanner.capturing
+
+    def _scan(self, s, pos):
+        scanner = self._scanner
+        return scanner._scan(s, pos)
+
+    def match(self, s, pos=0):
+        scanner = self._scanner
+        m = scanner.match(s, pos)
+        if m is None:
+            return Match(s, pos, pos, self._default)
+        else:
+            return m
+
+
+class py_Lookahead(py_Scanner):
+    def __init__(self, scanner):
+        self._scanner = scanner
+
+    def _scan(self, s, pos):
+        scanner = self._scanner
+        if scanner._scan(s, pos) == NOMATCH:
+            return NOMATCH
+        else:
+            return pos
+
+
+class py_NegativeLookahead(py_Scanner):
+    def __init__(self, scanner):
+        self._scanner = scanner
+
+    def _scan(self, s, pos):
+        scanner = self._scanner
+        if scanner._scan(s, pos) == NOMATCH:
+            return pos
+        else:
+            return NOMATCH
+
+
 class py_Nonterminal(py_Scanner):
     def __init__(self, grammar, name):
         self._grammar = grammar
@@ -428,6 +503,11 @@ class py_Nonterminal(py_Scanner):
 
     def _scan(self, s, pos):
         scanner = self._grammar[self._name]
+        if scanner is None:
+            raise Exception(
+                'Nonterminal {} is not associated with a grammar'
+                .format(self._name)
+            )
         return scanner._scan(s, pos)
 
     def match(self, s, pos=0):
@@ -438,31 +518,56 @@ class py_Nonterminal(py_Scanner):
             m.value = action(m.value)
         return m
 
+    def set_grammar(self, g):
+        self._grammar = g
 
-def py_Group(scanner, action=None):
-    scanner.grouped = True
-    scanner.action = action
-    return scanner
+
+class py_Group(py_Scanner):
+    def __init__(self, scanner, action=None):
+        self._scanner = scanner
+        self.action = action
+        self.capturing = True
+
+    def _scan(self, s, pos):
+        scanner = self._scanner
+        return scanner._scan(s, pos)
+
+    def match(self, s, pos=0):
+        scanner = self._scanner
+        m = scanner.match(s, pos)
+        if m is not None:
+            if self.action is None:
+                m.value = [m.value]
+            else:
+                m.value = self.action(m.value)
+        return m
 
 
 # use fast versions if available
 
-Scanner         = c_Scanner or py_Scanner
-Nonterminal     = c_Nonterminal or py_Nonterminal
-Group           = c_Group or py_Group
-Bounded         = c_Bounded or py_Bounded
-Repeat          = c_Repeat or py_Repeat
-Dot             = c_Dot or py_Dot
-CharacterClass  = c_CharacterClass or py_CharacterClass
-Literal         = c_Literal or py_Literal
-BoundedString   = c_BoundedString or py_BoundedString
-Sequence        = c_Sequence or py_Sequence
-Choice          = c_Choice or py_Choice
-Spacing         = c_Spacing or py_Spacing
-Integer         = c_Integer or py_Integer
-Float           = c_Float or py_Float
-Regex           = c_Regex or py_Regex
+Scanner             = c_Scanner or py_Scanner
+Dot                 = c_Dot or py_Dot
+CharacterClass      = c_CharacterClass or py_CharacterClass
+Literal             = c_Literal or py_Literal
+Regex               = c_Regex or py_Regex
+Spacing             = c_Spacing or py_Spacing
+Integer             = c_Integer or py_Integer
+Float               = c_Float or py_Float
+BoundedString       = c_BoundedString or py_BoundedString
+Bounded             = c_Bounded or py_Bounded
+Sequence            = c_Sequence or py_Sequence
+Choice              = c_Choice or py_Choice
+Repeat              = c_Repeat or py_Repeat
+Optional            = c_Optional or py_Optional
+Lookahead           = c_Lookahead or py_Lookahead
+NegativeLookahead   = c_NegativeLookahead or py_NegativeLookahead
+Nonterminal         = c_Nonterminal or py_Nonterminal
+Group               = c_Group or py_Group
 
+# convenient partial applications
+
+ZeroOrMore = partial(Repeat, min=0, max=-1, delimiter=None)
+OneOrMore  = partial(Repeat, min=1, max=-1, delimiter=None)
 
 # utility functions
 
