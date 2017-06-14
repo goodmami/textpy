@@ -136,15 +136,6 @@ class py_Scanner(object):
         except IndexError:
             return None
 
-    def set_grammar(self, g):
-        if hasattr(self, '_scanner'):
-            self._scanner.set_grammar(g)
-        if hasattr(self, '_delimiter') and self._delimiter is not None:
-            self._delimiter.set_grammar(g)
-        if hasattr(self, '_scanners'):
-            for scanner in self._scanners:
-                scanner.set_grammar(g)
-
 class py_Dot(py_Scanner):
     def _scan(self, s, pos):
         s[pos]  # check for IndexError
@@ -380,6 +371,8 @@ class py_Repeat(py_Scanner):
         self._min = min
         self._max = max
         self._delimiter = delimiter
+        self.capturing = (scanner.capturing or
+                          (delimiter is not None and delimiter.capturing))
 
     def _scan(self, s, pos):
         scanner, delimiter = self._scanner, self._delimiter
@@ -517,9 +510,6 @@ class py_Nonterminal(py_Scanner):
         if action is not None:
             m.value = action(m.value)
         return m
-
-    def set_grammar(self, g):
-        self._grammar = g
 
 
 class py_Group(py_Scanner):

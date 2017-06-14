@@ -40,6 +40,7 @@ answer: http://stackoverflow.com/a/24519338/1441112
 
 from grammarian.scanners import *
 from grammarian.actions import constant
+from grammarian.grammars import Grammar
 
 
 grm = {}
@@ -53,11 +54,11 @@ Comma = Literal(',')
 WS = Spacing()
 Object = Group(
     Bounded(
-        Sequence(Literal('{')),
+        Literal('{'),
         Repeat(Group(Sequence(WS, Str, WS, Literal(':'), WS,
                               Group(Nonterminal(grm, 'Value')), WS)),
                delimiter=Comma),
-        Sequence(Literal('}'))
+        Literal('}')
     ),
     action=dict
 )
@@ -74,30 +75,38 @@ grm['Value'] = Choice(Object, Array, Str, Tru, Fls, Nul, Flt, Int)
 
 Json = Choice(Object, Array)
 
-# from grammarian import PEG, constant
 
-# Json = PEG(
-#     '''
-#     Start    = Object | Array
-#     Object   = "{" (((DQString) ":" (Value)){:","}) "}"
-#     Array    = "[" ((Value{:","})) "]"
-#     Value    = Object | Array | DQString
-#              | True | False | Null | Float | Integer
-#     True     = "true"
-#     False    = "false"
-#     Null     = "null"
-#     ''',
-#     actions=dict(
-#         Object=dict,
-#         Array=list,
-#         DQString=lambda s: s[1:-1],
-#         True=constant(True),
-#         False=constant(False),
-#         Null=constant(None),
-#         Float=float,
-#         Integer=int
-#     )
-# )
+Json2 = Grammar(
+    '''
+    Start    = Object | Array
+    Object   = "{" Spacing
+               ((DQString) Spacing ":" Spacing (Value)){:Comma}
+               Spacing "}"
+    Array    = "[" Spacing
+               (Value){:Comma}
+               Spacing "]"
+    Value    = Object | Array | DQString
+             | TrueVal | FalseVal | NullVal | Float | Integer
+    TrueVal  = "true"
+    FalseVal = "false"
+    NullVal  = "null"
+    Comma    = Spacing "," Spacing
+    '''
+)
+Json2['Float'] = Float()
+Json2['Integer'] = Integer()
+Json2['DQString'] = BoundedString('"', '"')
+Json2['Spacing'] = Spacing()
+Json2.update_actions(
+    Object=dict,
+    Array=list,
+    DQString=lambda s: s[1:-1],
+    TrueVal=constant(True),
+    FalseVal=constant(False),
+    NullVal=constant(None),
+    Float=float,
+    Integer=int
+)
 
 
 if __name__ == '__main__':
@@ -116,18 +125,33 @@ if __name__ == '__main__':
             "null": null
         }
     }'''
+
     assert Json.match(s) is not None
     assert Json.match(s).value == {
         'bool': [True, False],
         'number': {'float': -0.14e3, 'int': 1},
         'other': {'string': 'string', 'unicode': 'あ', 'null': None}
     }
+    assert Json2.match(s) is not None
+    assert Json2.match(s).value == {
+        'bool': [True, False],
+        'number': {'float': -0.14e3, 'int': 1},
+        'other': {'string': 'string', 'unicode': 'あ', 'null': None}
+    }
     import timeit
     print(
-        'grammarian',
+        'grammarian (function composition)',
         timeit.timeit(
             'Json.match(s)',
             setup='from __main__ import Json, s',
+            number=10000
+        )
+    )
+    print(
+        'grammarian (grammar definition)',
+        timeit.timeit(
+            'Json2.match(s)',
+            setup='from __main__ import Json2, s',
             number=10000
         )
     )

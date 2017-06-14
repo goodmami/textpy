@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 from grammarian.io import (
-    IdentifierReader,
-    IntegerReader,
+    _Id,
     DotReader,
     LiteralReader,
     CharacterClassReader,
@@ -14,57 +13,84 @@ from grammarian.io import (
     SequenceReader,
     ChoiceReader,
     GroupReader,
-    RuleReader
+    RuleReader,
+    GrammarReader
 )
 
 # NOMATCH = scanners.NOMATCH
 
 def test_IdentifierReader():
-    assert IdentifierReader.match('a1').value == 'a1'
-    assert IdentifierReader.match('-_-').value == '-_-'
-    assert IdentifierReader.match('1') is None
-
-def test_IntegerReader():
-    assert IntegerReader.match('1').value == 1
+    assert _Id.match('a1').value == 'a1'
+    assert _Id.match('-_-').value == '-_-'
+    assert _Id.match('1') is None
 
 def test_DotReader():
-    assert DotReader.match('.').value.match('a').value == 'a'
-    assert DotReader.match('.').value.match(' ').value == ' '
+    assert DotReader.match('.').value == ('Dot',)
 
 def test_LiteralReader():
-    assert LiteralReader.match('"abc"').value.match('abc').value == 'abc'
+    assert LiteralReader.match('"abc"').value == ('Literal', 'abc')
 
 def test_CharacterClassReader():
-    assert CharacterClassReader.match('[abc]').value.match('c').value == 'c'
+    assert CharacterClassReader.match('[abc]').value == ('CharacterClass', 'abc')
 
 def test_RegexReader():
-    assert RegexReader.match('/ab*/').value.match('abbbbc').value == 'abbbb'
+    assert RegexReader.match('/ab*/').value == ('Regex', 'ab*')
 
 def test_PrimaryReader():
-    assert PrimaryReader.match('"abc"').value.match('abc').value == 'abc'
-    assert PrimaryReader.match('[abc]').value.match('c').value == 'c'
-    assert PrimaryReader.match('/ab*/').value.match('abbbbc').value == 'abbbb'
+    assert PrimaryReader.match('.').value == ('Dot',)
+    assert PrimaryReader.match('"abc"').value == ('Literal', 'abc')
+    assert PrimaryReader.match('[abc]').value == ('CharacterClass', 'abc')
+    assert PrimaryReader.match('/ab*/').value == ('Regex', 'ab*')
+    assert PrimaryReader.match('(.)').value == ('Group', ('Dot',))
+    assert PrimaryReader.match('A').value == ('Nonterminal', 'A')
 
 def test_SequenceReader():
-    assert SequenceReader.match('"abc"').value is not None
-    assert SequenceReader.match('"abc"').value.match('abc').value == 'abc'
-    assert SequenceReader.match('"a" "b" "c"').value.match('abc').value == 'abc'
+    assert SequenceReader.match('"abc"').value == ('Literal', 'abc')
+    assert SequenceReader.match('"a" "b" "c"').value == ('Sequence', [
+        ('Literal', 'a'), ('Literal', 'b'), ('Literal', 'c')
+    ])
 
 def test_GroupReader():
-    assert GroupReader.match('("abc")').value.match('abc').value == ['abc']
-    assert SequenceReader.match('"a" ("b")').value.match('ab').value == ['b']
+    assert GroupReader.match('("abc")').value == ('Group', ('Literal', 'abc'))
+    assert SequenceReader.match('"a" ("b")').value == ('Sequence', [
+        ('Literal', 'a'), ('Group', ('Literal', 'b'))
+    ])
 
 def test_ChoiceReader():
-    assert ChoiceReader.match('"a" | "b"').value.match('a').value == 'a'
-    assert ChoiceReader.match('"a" | "b"').value.match('b').value == 'b'
-    assert ChoiceReader.match('"a" "b" | "c"').value.match('ab').value == 'ab'
-    assert ChoiceReader.match('"a" "b" | "c"').value.match('c').value == 'c'
-    assert ChoiceReader.match('"a" "b" | "c"').value.match('ac') is None
+    assert ChoiceReader.match('"a" | "b"').value == ('Choice', [
+        ('Literal', 'a'), ('Literal', 'b')
+    ])
+    assert ChoiceReader.match('"a" "b" | "c"').value == ('Choice', [
+        ('Sequence', [('Literal', 'a'), ('Literal', 'b')]), ('Literal', 'c')
+    ])
 
-# def test_OptionalReader():
-#     assert OptionalReader.match('"a"?').value.match('a').value == 'a'
-#     assert OptionalReader.match('"a"?').value.match('b').value == ''
+def test_PrefixReader():
+    assert PrefixReader.match('&').value == ('Lookahead', None)
+    assert PrefixReader.match('!').value == ('NegativeLookahead', None)
+
+def test_SuffixReader():
+    assert SuffixReader.match('*').value == ('ZeroOrMore', None)
+    assert SuffixReader.match('+').value == ('OneOrMore', None)
+    assert SuffixReader.match('?').value == ('Optional', None)
+    assert SuffixReader.match('{}').value == ('Repeat', None, {'min': 0, 'max': -1, 'delimiter': None})
+
+def test_TermReader():
+    assert TermReader.match('"abc"').value == ('Literal', 'abc')
+    assert TermReader.match('"abc"?').value == ('Optional', ('Literal', 'abc'))
+    assert TermReader.match('&"abc"').value == ('Lookahead', ('Literal', 'abc'))
+    assert TermReader.match('&"abc"+').value == ('Lookahead', ('OneOrMore', ('Literal', 'abc')))
 
 def test_RuleReader():
-    assert RuleReader.match('A = "a"').value[1].match('a').value == 'a'
-    assert RuleReader.match('A = "a"\n    "b"').value[1].match('a').value == 'a'
+    assert RuleReader.match('A = "a"').value == ('Rule', 'A', ('Literal', 'a'))
+    assert RuleReader.match('A = "a"\n    "b"').value == ('Rule', 'A', ('Sequence', [
+        ('Literal', 'a'), ('Literal', 'b')
+    ]))
+
+def test_GrammarReader():
+    assert GrammarReader.match('''
+        A = B
+        B = "b"
+    ''').value == {
+        'A': ('Nonterminal', 'B'),
+        'B': ('Literal', 'b')
+    }

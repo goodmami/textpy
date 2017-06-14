@@ -1,9 +1,5 @@
 
-from functools import partial
-
 from grammarian.scanners import *
-from grammarian.actions import constant
-from grammarian.grammars import Grammar
 
 '''
 | `X < ...`    | Rule `X` returns a list                          |
@@ -28,59 +24,34 @@ from grammarian.grammars import Grammar
 | `A ^`        | cut/ratchet after matching `A`                   |
 '''
 
-def _make_term_or_sequence(vals):
-    if len(vals) == 0:
-        raise ValueError('At least one term is required.')
-    elif len(vals) == 1:
-        return vals[0]
-    else:
-        return Sequence(*vals)
-
-def _make_sequence_or_choice(vals):
-    if len(vals) == 0:
-        raise ValueError('At least one term is required.')
-    elif len(vals) == 1:
-        return vals[0]
-    else:
-        return Choice(*vals)
-
-def _make_repeat(vals):
-    return partial(Repeat, min=vals[0], max=vals[1], delimiter=vals[2])
-
-def _make_term(vals):
-    prefix, term, suffix = vals
-    if suffix is not None:
-        term = suffix(term)
-    if prefix is not None:
-        term = prefix(term)
-    return term
-
-def _make_grammar(vals):
-    grm = Grammar()
-    for identifier, expression in vals:
-        print(identifier, expression)
-        grm[identifier] = expression
-    return grm
+def _make(t, v):
+    return (t, v)
 
 patterns = {}
 
 _WS = Spacing()
+_Int = Group(Integer(), action=int)
+_Id = Regex(r'[-a-zA-Z_][-a-zA-Z0-9_]*')
 
-IntegerReader = Group(Integer(), action=int)
-
-IdentifierReader = Regex(r'[-a-zA-Z_][-a-zA-Z0-9_]*')
-
-DotReader = Group(Literal('.'), action=lambda s: Dot())
+DotReader = Group(
+    Literal('.'),
+    action=lambda s: ('Dot',)
+)
 
 LiteralReader = Group(
-    BoundedString('"', '"'), action=lambda s: Literal(s[1:-1])
+    BoundedString('"', '"'),
+    action=lambda s: _make('Literal', s[1:-1])
 )
 
 CharacterClassReader = Group(
-    BoundedString('[', ']'), action=lambda s: CharacterClass(s[1:-1])
+    BoundedString('[', ']'),
+    action=lambda s: _make('CharacterClass', s[1:-1])
 )
 
-RegexReader = Group(BoundedString('/', '/'), action=lambda s: Regex(s[1:-1]))
+RegexReader = Group(
+    BoundedString('/', '/'),
+    action=lambda s: _make('Regex', s[1:-1])
+)
 
 PrimaryReader = Choice(
     DotReader,
@@ -90,20 +61,25 @@ PrimaryReader = Choice(
     Nonterminal(patterns, 'Group'),
     Group(
         Sequence(
-            Group(IdentifierReader),
+            Group(_Id),
             NegativeLookahead(Sequence(_WS, Literal('=')))
         ),
-        action=lambda xs: Nonterminal(None, xs[0]),
+        action=lambda xs: _make('Nonterminal', xs[0]),
     )
 )
+
+
+def _make_repeat(vals):
+    _min, _max, delim = vals
+    return ('Repeat', None, {'min': _min, 'max': _max, 'delimiter': delim})
 
 # "{" (?: (Integer) (?: "," (Integer) )? )? (?: ":" (Term) )? "}"
 RepeatReader = Bounded(
     Literal('{'),
     Sequence(
-        Optional(Group(IntegerReader), default=(0,)),
+        Optional(Group(_Int), default=(0,)),
         Optional(
-            Sequence(Literal(','), Group(IntegerReader)),
+            Sequence(Literal(','), Group(_Int)),
             default=(-1,)
         ),
         Optional(
@@ -116,16 +92,25 @@ RepeatReader = Bounded(
 RepeatReader.action=_make_repeat
 
 PrefixReader = Choice(
-    Group(Literal('&'), action=constant(Lookahead)),
-    Group(Literal('!'), action=constant(NegativeLookahead))
+    Group(Literal('&'), action=lambda x: _make('Lookahead', None)),
+    Group(Literal('!'), action=lambda x: _make('NegativeLookahead', None))
 )
 
 SuffixReader = Choice(
-    Group(Literal('*'), action=constant(ZeroOrMore)),
-    Group(Literal('+'), action=constant(OneOrMore)),
-    Group(Literal('?'), action=constant(Optional)),
+    Group(Literal('*'), action=lambda x: _make('ZeroOrMore', None)),
+    Group(Literal('+'), action=lambda x: _make('OneOrMore', None)),
+    Group(Literal('?'), action=lambda x: _make('Optional', None)),
     RepeatReader
 )
+
+
+def _make_term(vals):
+    prefix, term, suffix = vals
+    if suffix is not None:
+        term = tuple([suffix[0], term] + list(suffix[2:]))
+    if prefix is not None:
+        term = tuple([prefix[0], term] + list(prefix[2:]))
+    return term
 
 TermReader = Sequence(
     Group(Optional(PrefixReader, default=None)),
@@ -134,28 +119,55 @@ TermReader = Sequence(
 )
 TermReader.action=_make_term
 
+
+# Sequences and Choices take a list of scanners; if there's only one,
+# just return the scanner (minor optimization)
+
+def _make_list(t, vs):
+    if len(vs) == 0:
+        raise ValueError('At least one term is required.')
+    elif len(vs) == 1:
+        return vs[0]
+    else:
+        return (t, vs)
+
 SequenceReader = Repeat(Group(TermReader), min=1, delimiter=_WS)
-SequenceReader.action=_make_term_or_sequence
+SequenceReader.action=lambda xs: _make_list('Sequence', xs)
 
 ChoiceReader = Repeat(
     Group(SequenceReader), min=1, delimiter=Sequence(_WS, Literal('|'), _WS)
 )
-ChoiceReader.action=_make_sequence_or_choice
+ChoiceReader.action=lambda xs: _make_list('Choice', xs)
+
 
 GroupReader = Bounded(
-    Sequence(Literal('('), _WS), ChoiceReader, Sequence(_WS, Literal(')'))
+    Sequence(Literal('('), _WS),
+    ChoiceReader,
+    Sequence(_WS, Literal(')'))
 )
-GroupReader.action = Group
+GroupReader.action = lambda x: _make('Group', x)
 
 patterns['Group'] = GroupReader
 
 RuleReader = Sequence(
-    _WS, Group(IdentifierReader), _WS, Literal('='), _WS, Group(ChoiceReader)
+    _WS, Group(_Id), _WS, Literal('='), _WS, Group(ChoiceReader)
 )
+RuleReader.action = lambda xs: ('Rule', xs[0], xs[1])
 
 CommentReader = Sequence(
-    Literal('#'), Repeat(Sequence(NegativeLookahead(Literal('\n')), Dot()))
+    Literal('#'),
+    Repeat(Sequence(NegativeLookahead(Literal('\n')), Dot()))
 )
+
+# Grammars collect rules and manage the associations between
+# nonterminals and their spellouts
+
+def _make_grammar(vals):
+    grm = {}
+    for typ, identifier, expression in vals:
+        if typ == 'Rule':
+            grm[identifier] = expression
+    return grm
 
 GrammarReader = Repeat(
     Group(RuleReader),

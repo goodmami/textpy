@@ -358,6 +358,8 @@ cdef class Repeat(Scanner):
         self._min = min
         self._max = max
         self._delimiter = delimiter
+        self.capturing = (scanner.capturing or
+                          (delimiter is not None and delimiter.capturing))
 
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner = self._scanner
