@@ -163,5 +163,39 @@ if __name__ == '__main__':
             number=10000
         )
     )
+    try:
+        from parsimonious.grammar import Grammar
+        Json3 = Grammar(r'''
+            Start    = Object / Array
+            Object   = LBrace (Mapping (Comma Mapping)*)? RBrace
+            Mapping  = DQString Colon Value
+            Array    = LBracket (Value (Comma Value)*)? RBracket
+            Value    = Object / Array / DQString
+                     / TrueVal / FalseVal / NullVal / Float / Integer
+            Spacing  = ~"\s*"
+            Comma    = "," Spacing
+            Colon    = ":" Spacing
+            LBrace   = "{" Spacing
+            RBrace   = "}" Spacing
+            LBracket = "[" Spacing
+            RBracket = "]" Spacing
+            TrueVal  = "true" Spacing
+            FalseVal = "false" Spacing
+            NullVal  = "null" Spacing
+            DQString = ~"\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"" Spacing
+            Float    = ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?" Spacing
+            Integer  = ~"[-+]?\d+" Spacing
+        ''')
+        print(
+            'parsimonious (scan only)',
+            timeit.timeit(
+                'Json3.match(s)',
+                setup='from __main__ import Json3, s',
+                number=10000
+            )
+        )
+    except ImportError:
+        pass
+
     import cProfile
     cProfile.run('[Json.match(s) for i in range(100)]', 'stats')

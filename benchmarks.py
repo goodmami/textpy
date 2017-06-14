@@ -68,3 +68,8 @@ pycytime(['Regex'], 'r"a(?:,a)*"', '"a,a,a,a"')
 
 print()
 pycytime(['Choice','Literal'], '{1}("a"),{1}("b")', '"b"')
+
+print()
+pycytime(['Bounded','Group','Literal'], '{2}("a"),{1}({2}("b")),{2}("c")', '"abc"')
+pycytime(['Sequence','Group','Literal'], '{2}("a"),{1}({2}("b")),{2}("c")', '"abc"')
+

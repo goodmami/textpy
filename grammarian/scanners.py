@@ -49,24 +49,24 @@ try:
         Group               as c_Group,
     )
 except ImportError:
-    Scanner             = None
-    Dot                 = None
-    CharacterClass      = None
-    Literal             = None
-    Regex               = None
-    Spacing             = None
-    Integer             = None
-    Float               = None
-    BoundedString       = None
-    Bounded             = None
-    Sequence            = None
-    Choice              = None
-    Repeat              = None
-    Optional            = None
-    Lookahead           = None
-    NegativeLookahead   = None
-    Nonterminal         = None
-    Group               = None
+    c_Scanner             = None
+    c_Dot                 = None
+    c_CharacterClass      = None
+    c_Literal             = None
+    c_Regex               = None
+    c_Spacing             = None
+    c_Integer             = None
+    c_Float               = None
+    c_BoundedString       = None
+    c_Bounded             = None
+    c_Sequence            = None
+    c_Choice              = None
+    c_Repeat              = None
+    c_Optional            = None
+    c_Lookahead           = None
+    c_NegativeLookahead   = None
+    c_Nonterminal         = None
+    c_Group               = None
 
 NOMATCH = -1
 EOS = -2
