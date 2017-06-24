@@ -2,7 +2,6 @@
 from grammarian.scanners import *
 
 '''
-| `X < ...`    | Rule `X` returns a list                          |
 | `X = ...`    | Rule `X` returns an item                         |
 | `"..."`      | string                                           |
 | `[...]`      | character class                                  |
@@ -21,41 +20,81 @@ from grammarian.scanners import *
 | `A{:B}`      | match `A`s delimited by `B`s                     |
 | `A{n:B}`     | match *n* `A`s delimited by `B`s                 |
 | `A{m,n:B}`   | match between *m* and *n* `A`s delimited by `B`s |
-| `A ^`        | cut/ratchet after matching `A`                   |
 '''
 
-def _make(t, v):
-    return (t, v)
 
-patterns = {}
+# helper functions
 
 _WS = Spacing()
 _Int = Group(Integer(), action=int)
 _Id = Regex(r'[-a-zA-Z_][-a-zA-Z0-9_]*')
+
+
+# basic functions
 
 DotReader = Group(
     Literal('.'),
     action=lambda s: ('Dot',)
 )
 
-LiteralReader = Group(
+SQLiteralReader = Group(
+    BoundedString("'", "'"),
+    action=lambda s: ('Literal', s[1:-1])
+)
+
+DQLiteralReader = Group(
     BoundedString('"', '"'),
-    action=lambda s: _make('Literal', s[1:-1])
+    action=lambda s: ('Literal', s[1:-1])
 )
 
 CharacterClassReader = Group(
     BoundedString('[', ']'),
-    action=lambda s: _make('CharacterClass', s[1:-1])
+    action=lambda s: ('CharacterClass', s[1:-1])
 )
 
 RegexReader = Group(
     BoundedString('/', '/'),
-    action=lambda s: _make('Regex', s[1:-1])
+    action=lambda s: ('Regex', s[1:-1])
 )
+
+LookaheadReader = Group(
+    Literal('&'),
+    action=lambda x: ('Lookahead', None)
+)
+
+NegativeLookaheadReader = Group(
+    Literal('!'),
+    action=lambda x: ('NegativeLookahead', None)
+)
+
+ZeroOrMoreReader = Group(
+    Literal('*'),
+    action=lambda x: ('ZeroOrMore', None)
+)
+
+OneOrMoreReader = Group(
+    Literal('+'),
+    action=lambda x: ('OneOrMore', None)
+)
+
+OptionalReader = Group(
+    Literal('?'),
+    action=lambda x: ('Optional', None)
+)
+
+CommentReader = Sequence(
+    Literal('#'),
+    Repeat(Sequence(NegativeLookahead(Literal('\n')), Dot()))
+)
+
+
+# composed grammar functions
+
+patterns = {}
 
 PrimaryReader = Choice(
     DotReader,
-    LiteralReader,
+    DQLiteralReader,
     CharacterClassReader,
     RegexReader,
     Nonterminal(patterns, 'Group'),
@@ -64,14 +103,9 @@ PrimaryReader = Choice(
             Group(_Id),
             NegativeLookahead(Sequence(_WS, Literal('=')))
         ),
-        action=lambda xs: _make('Nonterminal', xs[0]),
+        action=lambda xs: ('Nonterminal', xs[0]),
     )
 )
-
-
-def _make_repeat(vals):
-    _min, _max, delim = vals
-    return ('Repeat', None, {'min': _min, 'max': _max, 'delimiter': delim})
 
 # "{" (?: (Integer) (?: "," (Integer) )? )? (?: ":" (Term) )? "}"
 RepeatReader = Bounded(
@@ -87,20 +121,16 @@ RepeatReader = Bounded(
             default=(None,)
         )
     ),
-    Literal('}')
+    Literal('}'),
+    action=lambda xs: (
+        'Repeat', None, {'min': xs[0], 'max': xs[1], 'delimiter': xs[2]}
+    )
 )
-RepeatReader.action=_make_repeat
 
-PrefixReader = Choice(
-    Group(Literal('&'), action=lambda x: _make('Lookahead', None)),
-    Group(Literal('!'), action=lambda x: _make('NegativeLookahead', None))
-)
+PrefixReader = Choice(LookaheadReader, NegativeLookaheadReader)
 
 SuffixReader = Choice(
-    Group(Literal('*'), action=lambda x: _make('ZeroOrMore', None)),
-    Group(Literal('+'), action=lambda x: _make('OneOrMore', None)),
-    Group(Literal('?'), action=lambda x: _make('Optional', None)),
-    RepeatReader
+    ZeroOrMoreReader, OneOrMoreReader, OptionalReader, RepeatReader
 )
 
 
@@ -115,9 +145,9 @@ def _make_term(vals):
 TermReader = Sequence(
     Group(Optional(PrefixReader, default=None)),
     Group(PrimaryReader),
-    Group(Optional(SuffixReader, default=None))
+    Group(Optional(SuffixReader, default=None)),
+    action=_make_term
 )
-TermReader.action=_make_term
 
 
 # Sequences and Choices take a list of scanners; if there's only one,
@@ -131,32 +161,28 @@ def _make_list(t, vs):
     else:
         return (t, vs)
 
-SequenceReader = Repeat(Group(TermReader), min=1, delimiter=_WS)
-SequenceReader.action=lambda xs: _make_list('Sequence', xs)
+SequenceReader = Repeat(
+    Group(TermReader), min=1, delimiter=_WS,
+    action=lambda xs: _make_list('Sequence', xs)
+)
 
 ChoiceReader = Repeat(
-    Group(SequenceReader), min=1, delimiter=Sequence(_WS, Literal('|'), _WS)
+    Group(SequenceReader), min=1, delimiter=Sequence(_WS, Literal('|'), _WS),
+    action=lambda xs: _make_list('Choice', xs)
 )
-ChoiceReader.action=lambda xs: _make_list('Choice', xs)
-
 
 GroupReader = Bounded(
     Sequence(Literal('('), _WS),
     ChoiceReader,
-    Sequence(_WS, Literal(')'))
+    Sequence(_WS, Literal(')')),
+    action=lambda x: ('Group', x)
 )
-GroupReader.action = lambda x: _make('Group', x)
 
 patterns['Group'] = GroupReader
 
 RuleReader = Sequence(
-    _WS, Group(_Id), _WS, Literal('='), _WS, Group(ChoiceReader)
-)
-RuleReader.action = lambda xs: ('Rule', xs[0], xs[1])
-
-CommentReader = Sequence(
-    Literal('#'),
-    Repeat(Sequence(NegativeLookahead(Literal('\n')), Dot()))
+    _WS, Group(_Id), _WS, Literal('='), _WS, Group(ChoiceReader),
+    action=lambda xs: ('Rule', xs[0], xs[1])
 )
 
 # Grammars collect rules and manage the associations between
@@ -172,6 +198,78 @@ def _make_grammar(vals):
 GrammarReader = Repeat(
     Group(RuleReader),
     min=1,
-    delimiter=_WS
+    delimiter=_WS,
+    action=_make_grammar
 )
-GrammarReader.action = _make_grammar
+
+
+# PEG functions
+
+PEGPatterns = {}
+
+PEGSQRegexReader = Group(
+    BoundedString("~'", "'"),
+    action=lambda s: ('Regex', s[2:-1])
+)
+
+PEGDQRegexReader = Group(
+    BoundedString('~"', '"'),
+    action=lambda s: ('Regex', s[2:-1])
+)
+
+PEGPrimaryReader = Choice(
+    DotReader,
+    SQLiteralReader,
+    DQLiteralReader,
+    CharacterClassReader,
+    PEGSQRegexReader,
+    PEGDQRegexReader,
+    Nonterminal(PEGPatterns, 'Group'),
+    Group(
+        Sequence(
+            Group(_Id),
+            NegativeLookahead(Sequence(_WS, Literal('<-')))
+        ),
+        action=lambda xs: ('Nonterminal', xs[0]),
+    )
+)
+
+PEGSuffixReader = Choice(ZeroOrMoreReader, OneOrMoreReader, OptionalReader)
+
+PEGTermReader = Sequence(
+    Group(Optional(PrefixReader, default=None)),
+    Group(PEGPrimaryReader),
+    Group(Optional(PEGSuffixReader, default=None)),
+    action=_make_term
+)
+
+PEGSequenceReader = Repeat(
+    Group(PEGTermReader), min=1, delimiter=_WS,
+    action=lambda xs: _make_list('Sequence', xs)
+)
+
+PEGChoiceReader = Repeat(
+    Group(PEGSequenceReader), min=1, delimiter=Sequence(_WS,Literal('/'),_WS),
+    action=lambda xs: _make_list('Choice', xs)
+)
+
+PEGGroupReader = Bounded(
+    Sequence(Literal('('), _WS),
+    PEGChoiceReader,
+    Sequence(_WS, Literal(')')),
+    action=lambda x: ('Group', x)
+)
+
+PEGPatterns['Group'] = PEGGroupReader
+
+PEGRuleReader = Sequence(
+    _WS, Group(_Id), _WS, Literal('<-'), _WS, Group(PEGChoiceReader),
+    action=lambda xs: ('Rule', xs[0], xs[1])
+)
+
+PEGReader = Repeat(
+    Group(PEGRuleReader),
+    min=1,
+    delimiter=_WS,
+    action=_make_grammar
+)

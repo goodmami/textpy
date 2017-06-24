@@ -3,7 +3,8 @@
 from grammarian.io import (
     _Id,
     DotReader,
-    LiteralReader,
+    SQLiteralReader,
+    DQLiteralReader,
     CharacterClassReader,
     RegexReader,
     PrimaryReader,
@@ -27,8 +28,11 @@ def test_IdentifierReader():
 def test_DotReader():
     assert DotReader.match('.').value == ('Dot',)
 
-def test_LiteralReader():
-    assert LiteralReader.match('"abc"').value == ('Literal', 'abc')
+def test_SQLiteralReader():
+    assert SQLiteralReader.match("'abc'").value == ('Literal', 'abc')
+
+def test_DQLiteralReader():
+    assert DQLiteralReader.match('"abc"').value == ('Literal', 'abc')
 
 def test_CharacterClassReader():
     assert CharacterClassReader.match('[abc]').value == ('CharacterClass', 'abc')

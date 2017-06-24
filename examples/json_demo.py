@@ -40,7 +40,7 @@ answer: http://stackoverflow.com/a/24519338/1441112
 
 from grammarian.scanners import *
 from grammarian.actions import constant
-from grammarian.grammars import Grammar
+from grammarian.grammars import Grammar, PEG
 
 
 grm = {}
@@ -108,6 +108,101 @@ Json2.update_actions(
     Integer=int
 )
 
+Json2b = Grammar(
+    '''
+    Start    = Object | Array
+    Object   = LBrace (Mapping (Comma Mapping)*)? RBrace
+    Mapping  = DQString Colon Value
+    Array    = LBracket (Value (Comma Value)*)? RBracket
+    Value    = Object | Array | DQString
+             | TrueVal | FalseVal | NullVal | Float | Integer
+    Spacing  = /\s*/
+    Comma    = "," Spacing
+    Colon    = ":" Spacing
+    LBrace   = "{" Spacing
+    RBrace   = "}" Spacing
+    LBracket = "[" Spacing
+    RBracket = "]" Spacing
+    TrueVal  = "true" Spacing
+    FalseVal = "false" Spacing
+    NullVal  = "null" Spacing
+    DQString = /\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"/ Spacing
+    Float    = /[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?/ Spacing
+    Integer  = /[-+]?\d+/ Spacing
+    '''
+)
+Json2c = Grammar(
+    '''
+    Start    = Object | Array
+    Object   = "{" Spacing
+               ((DQString) Spacing ":" Spacing (Value)){:Comma}
+               Spacing "}"
+    Array    = "[" Spacing
+               (Value){:Comma}
+               Spacing "]"
+    Value    = Object | Array | DQString
+             | TrueVal | FalseVal | NullVal | Float | Integer
+    TrueVal  = "true"
+    FalseVal = "false"
+    NullVal  = "null"
+    Comma    = Spacing "," Spacing
+    '''
+)
+Json2c['Float'] = Float()
+Json2c['Integer'] = Integer()
+Json2c['DQString'] = BoundedString('"', '"')
+Json2c['Spacing'] = Spacing()
+
+Json2d = PEG(
+    '''
+    Start        <- Object / Array
+    Object       <- OPENBRACE (KeyVal (COMMA KeyVal)*)? CLOSEBRACE
+    Array        <- OPENBRACKET (Value (COMMA Value)*)? CLOSEBRACKET
+    KeyVal       <- Key COLON Value
+    Key          <- DQSTRING Spacing
+    Value        <- (DQSTRING / Object / Array / Number / True / False / Null) Spacing
+    DQSTRING     <- ~"\\\"[^\\\"\\\\]*(?:\\\\.[^\\\"\\\\]*)*\\\"" Spacing
+    Number       <- Float / Int
+    Float        <- ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?" Spacing
+    Int          <- ~"[-+]?\d+" Spacing
+    True         <- 'true'
+    False        <- 'false'
+    Null         <- 'null'
+    OPENBRACE    <- '{' Spacing
+    CLOSEBRACE   <- '}' Spacing
+    OPENBRACKET  <- '[' Spacing
+    CLOSEBRACKET <- ']' Spacing
+    COMMA        <- ',' Spacing
+    COLON        <- ':' Spacing
+    Spacing      <- [ \t\n]*
+    '''
+)
+
+try:
+    from parsimonious.grammar import Grammar
+    Json3 = Grammar(r'''
+        Start    = Object / Array
+        Object   = LBrace (Mapping (Comma Mapping)*)? RBrace
+        Mapping  = DQString Colon Value
+        Array    = LBracket (Value (Comma Value)*)? RBracket
+        Value    = Object / Array / DQString
+                 / TrueVal / FalseVal / NullVal / Float / Integer
+        Spacing  = ~"\s*"
+        Comma    = "," Spacing
+        Colon    = ":" Spacing
+        LBrace   = "{" Spacing
+        RBrace   = "}" Spacing
+        LBracket = "[" Spacing
+        RBracket = "]" Spacing
+        TrueVal  = "true" Spacing
+        FalseVal = "false" Spacing
+        NullVal  = "null" Spacing
+        DQString = ~"\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"" Spacing
+        Float    = ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?" Spacing
+        Integer  = ~"[-+]?\d+" Spacing
+    ''')
+except ImportError:
+    Json3 = None
 
 if __name__ == '__main__':
     s = '''{
@@ -138,6 +233,7 @@ if __name__ == '__main__':
         'number': {'float': -0.14e3, 'int': 1},
         'other': {'string': 'string', 'unicode': 'あ', 'null': None}
     }
+    assert Json2b.match(s) is not None
     import timeit
     print(
         'grammarian (function composition)',
@@ -163,29 +259,33 @@ if __name__ == '__main__':
             number=10000
         )
     )
-    try:
-        from parsimonious.grammar import Grammar
-        Json3 = Grammar(r'''
-            Start    = Object / Array
-            Object   = LBrace (Mapping (Comma Mapping)*)? RBrace
-            Mapping  = DQString Colon Value
-            Array    = LBracket (Value (Comma Value)*)? RBracket
-            Value    = Object / Array / DQString
-                     / TrueVal / FalseVal / NullVal / Float / Integer
-            Spacing  = ~"\s*"
-            Comma    = "," Spacing
-            Colon    = ":" Spacing
-            LBrace   = "{" Spacing
-            RBrace   = "}" Spacing
-            LBracket = "[" Spacing
-            RBracket = "]" Spacing
-            TrueVal  = "true" Spacing
-            FalseVal = "false" Spacing
-            NullVal  = "null" Spacing
-            DQString = ~"\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"" Spacing
-            Float    = ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?" Spacing
-            Integer  = ~"[-+]?\d+" Spacing
-        ''')
+
+    print(
+        'grammarian (grammar definition; alt grammar; scan only)',
+        timeit.timeit(
+            'Json2b.scan(s)',
+            setup='from __main__ import Json2b, s',
+            number=10000
+        )
+    )
+    print(
+        'grammarian (grammar definition; scan only)',
+        timeit.timeit(
+            'Json2c.scan(s)',
+            setup='from __main__ import Json2c, s',
+            number=10000
+        )
+    )
+    print(
+        'grammarian (peg; scan only)',
+        timeit.timeit(
+            'Json2d.scan(s)',
+            setup='from __main__ import Json2d, s',
+            number=10000
+        )
+    )
+
+    if Json3 is not None:
         print(
             'parsimonious (scan only)',
             timeit.timeit(
@@ -194,8 +294,6 @@ if __name__ == '__main__':
                 number=10000
             )
         )
-    except ImportError:
-        pass
 
     import cProfile
     cProfile.run('[Json.match(s) for i in range(100)]', 'stats')

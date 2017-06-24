@@ -49,6 +49,9 @@ cdef class Scanner(object):
     cdef public bint capturing
     cdef public object action
 
+    def __init__(self, object action=None):
+        self.action = action
+
     cpdef int scan(self, unicode s, int pos=0) except EOS:
         try:
             return self._scan(s, pos)
@@ -58,16 +61,11 @@ cdef class Scanner(object):
     cdef int _scan(self, unicode s, int pos) except EOS:
         return NOMATCH
 
-    cpdef int scanpos(self, unicode s, int pos) except EOS:
-        cdef int end = self.scan(s, pos)
-        if end == NOMATCH:
-            return pos
-        return end
-
     cpdef Match match(self, unicode s, int pos=0):
-        cdef int end = self.scan(s, pos)
+        cdef int end
         cdef object action = self.action
         try:
+            end = self._scan(s, pos)
             if end == NOMATCH:
                 return None
             else:
@@ -97,7 +95,8 @@ cdef class Dot(Scanner):
 cdef class CharacterClass(Scanner):
     cdef list _ranges
     cdef unicode _chars
-    def __init__(self, unicode clsstr):
+    def __init__(self, unicode clsstr, object action=None):
+        self.action = action
         cdef list ranges = [], chars = []
         cdef int i = 0, n = len(clsstr)
         while i < n-2:
@@ -126,7 +125,8 @@ cdef class CharacterClass(Scanner):
 cdef class Literal(Scanner):
     cdef unicode _x
     cdef int _xlen
-    def __init__(self, unicode x):
+    def __init__(self, unicode x, object action=None):
+        self.action = action
         self._x = x
         self._xlen = len(x)
     cdef int _scan(self, unicode s, int pos) except EOS:
@@ -138,7 +138,8 @@ cdef class Literal(Scanner):
 
 cdef class Regex(Scanner):
     cdef object _regex
-    def __init__(self, object pattern):
+    def __init__(self, object pattern, object action=None):
+        self.action = action
         if hasattr(pattern, 'match'):
             self._regex = pattern
         else:
@@ -153,7 +154,8 @@ cdef class Regex(Scanner):
 
 cdef class Spacing(Scanner):
     cdef unicode _ws
-    def __init__(self, unicode ws=u' \n\t\r\f\v'):
+    def __init__(self, unicode ws=u' \n\t\r\f\v', object action=None):
+        self.action = action
         self._ws = ws
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef unicode ws = self._ws
@@ -218,7 +220,8 @@ cdef class Float(Scanner):
 
 cdef class BoundedString(Scanner):
     cdef unicode first, last
-    def __init__(self, unicode first, unicode last):
+    def __init__(self, unicode first, unicode last, object action=None):
+        self.action = action
         self.first = first
         self.last = last
     cdef int _scan(self, unicode s, int pos) except EOS:
@@ -239,7 +242,9 @@ cdef class BoundedString(Scanner):
 cdef class Bounded(Scanner):
     cdef Scanner _lhs, _body, _rhs
 
-    def __init__(self, Scanner lhs, Scanner body, Scanner rhs):
+    def __init__(self, Scanner lhs, Scanner body, Scanner rhs,
+                 object action=None):
+        self.action = action
         self._lhs = lhs
         self._body = body
         self._rhs = rhs
@@ -275,7 +280,8 @@ cdef class Bounded(Scanner):
 cdef class Sequence(Scanner):
     cdef tuple _scanners
 
-    def __init__(self, *scanners):
+    def __init__(self, *scanners, object action=None):
+        self.action = action
         self._scanners = scanners
         self.capturing = any(s.capturing for s in scanners)
 
@@ -320,7 +326,8 @@ cdef class Sequence(Scanner):
 cdef class Choice(Scanner):
     cdef tuple _scanners
 
-    def __init__(self, *scanners):
+    def __init__(self, *scanners, object action=None):
+        self.action = action
         self._scanners = scanners
         self.capturing = any(s.capturing for s in scanners)
 
@@ -353,7 +360,8 @@ cdef class Repeat(Scanner):
     cdef int _min, _max
 
     def __init__(self, Scanner scanner, int min=0, int max=-1,
-                 Scanner delimiter=None):
+                 Scanner delimiter=None, object action=None):
+        self.action = action
         self._scanner = scanner
         self._min = min
         self._max = max
@@ -438,7 +446,9 @@ cdef class Optional(Scanner):
     cdef Scanner _scanner
     cdef object _default
 
-    def __init__(self, Scanner scanner, object default=...):
+    def __init__(self, Scanner scanner, object default=...,
+                 object action=None):
+        self.action = action
         self._scanner = scanner
         if default is Ellipsis:
             self._default = [] if scanner.capturing else ''
@@ -448,7 +458,14 @@ cdef class Optional(Scanner):
 
     cdef int _scan(self, unicode s, int pos) except EOS:
         cdef Scanner scanner = self._scanner
-        return scanner._scan(s, pos)
+        cdef int end
+        try:
+            end = scanner._scan(s, pos)
+            if end == NOMATCH:
+                end = pos
+        except IndexError:
+            end = pos
+        return end
 
     cpdef Match match(self, unicode s, int pos=0):
         cdef Scanner scanner = self._scanner
@@ -491,7 +508,8 @@ cdef class Nonterminal(Scanner):
     cdef object _grammar
     cdef unicode _name
 
-    def __init__(self, object grammar, unicode name):
+    def __init__(self, object grammar, unicode name, object action=None):
+        self.action = action
         self._grammar = grammar
         self._name = name
 
@@ -520,8 +538,8 @@ cdef class Group(Scanner):
     cdef Scanner _scanner
 
     def __init__(self, Scanner scanner, object action=None):
-        self._scanner = scanner
         self.action = action
+        self._scanner = scanner
         self.capturing = True
 
     cdef int _scan(self, unicode s, int pos) except EOS:

@@ -4,13 +4,18 @@ from grammarian import io
 # from grammarian.scanners import Scanner, Nonterminal
 
 class Grammar(Scanner):
+    GrammarReader = io.GrammarReader
     def __init__(self, definition=None, actions=None, start='Start'):
         self._grm = {}
+        self._description = {}
         if definition is not None:
             self.read(definition)
         if actions is not None:
             self.update_actions(actions)
         self.start = start
+
+    def __str__(self):
+        return '\n'.join(n + ' = ' + str(r) for n, r in self._grm.items())
 
     def __setitem__(self, identifier, scanner):
         if not isinstance(scanner, Scanner):
@@ -23,18 +28,23 @@ class Grammar(Scanner):
     def nonterminal(self, identifier):
         return Nonterminal(self._grm, identifier)
 
-    def _scan(self, s, pos):
+    # def _scan(self, s, pos):
+    #     scanner = self._grm[self.start]
+    #     return scanner._scan(s, pos)
+
+    def scan(self, s, pos=0):
         scanner = self._grm[self.start]
-        return scanner._scan(s, pos)
+        return scanner.scan(s, pos)
 
     def match(self, s, pos=0):
         scanner = self._grm[self.start]
         return scanner.match(s, pos)
 
     def read(self, definition):
-        d = io.GrammarReader.match(definition)
+        d = self.GrammarReader.match(definition)
         if d is None:
             raise ValueError('Not a valid grammar definition: ' + definition)
+        self._description.update(d.value)
         for identifier, spellout in d.value.items():
             self[identifier] = self._make_scanner(spellout)
 
@@ -67,8 +77,6 @@ class Grammar(Scanner):
             return CharacterClass(a[1])
         elif typ == 'Regex':
             return Regex(a[1])
-        elif typ == 'CharacterClass':
-            return CharacterClass(a[1])
         elif typ == 'Group':
             return Group(self._make_scanner(a[1]))
         elif typ == 'Nonterminal':
@@ -97,3 +105,7 @@ class Grammar(Scanner):
             return Choice(*[self._make_scanner(b) for b in a[1]])
         else:
             raise ValueError('Invalid scanner type: ' + str(typ))
+
+
+class PEG(Grammar):
+    GrammarReader = io.PEGReader

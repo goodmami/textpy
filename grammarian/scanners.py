@@ -110,17 +110,14 @@ class py_Scanner(object):
     capturing = False
     action = None
 
+    def __init__(self, action=None):
+        self.action = action
+
     def scan(self, s, pos=0):
         try:
             return self._scan(s, pos)
         except IndexError:
             return NOMATCH
-
-    def scanpos(self, s, pos=0):
-        end = self.scan(s, pos)
-        if end == NOMATCH:
-            return pos
-        return end
 
     def match(self, s, pos=0):
         try:
@@ -137,13 +134,17 @@ class py_Scanner(object):
             return None
 
 class py_Dot(py_Scanner):
+    def __repr__(self): return 'Dot()'
+    def __str__(self): return '.'
     def _scan(self, s, pos):
         s[pos]  # check for IndexError
         return pos + 1
 
 
 class py_CharacterClass(py_Scanner):
-    def __init__(self, clsstr):
+    def __init__(self, clsstr, action=None):
+        self.action = action
+        self._clsstr = clsstr
         self._ranges = []
         self._chars = []
         i = 0
@@ -158,6 +159,9 @@ class py_CharacterClass(py_Scanner):
             self._chars.append(clsstr[i])
             i += 1
 
+    def __repr__(self): return 'CharacterClass({})'.format(repr(self._clsstr))
+    def __str__(self): return '[{}]'.format(self._clsstr)
+
     def _scan(self, s, pos):
         c = s[pos]
         if c in self._chars or any(a <= c <= b for a, b in self._ranges):
@@ -166,9 +170,13 @@ class py_CharacterClass(py_Scanner):
 
 
 class py_Literal(py_Scanner):
-    def __init__(self, x):
+    def __init__(self, x, action=None):
+        self.action = action
         self._x = x
         self._xlen = len(x)
+
+    def __repr__(self): return 'Literal({})'.format(repr(self._x))
+    def __str__(self): return '"{}"'.format(self._x)
 
     def _scan(self, s, pos):
         end = pos + self._xlen
@@ -178,11 +186,15 @@ class py_Literal(py_Scanner):
 
 
 class py_Regex(py_Scanner):
-    def __init__(self, pattern):
+    def __init__(self, pattern, action=None):
+        self.action = action
         if hasattr(pattern, 'match'):
             self.regex = pattern
         else:
             self.regex = re.compile(pattern)
+
+    def __repr__(self): return 'Regex({})'.format(repr(self.regex.pattern))
+    def __str__(self): return '/{}/'.format(self.regex.pattern)
 
     def _scan(self, s, pos):
         m = self.regex.match(s, pos=pos)
@@ -193,8 +205,15 @@ class py_Regex(py_Scanner):
 
 
 class py_Spacing(py_Scanner):
-    def __init__(self, ws=u' \t\n\r\f\v'):
+    def __init__(self, ws=u' \t\n\r\f\v', action=None):
+        self.action = action
         self._ws = ws
+
+    def __repr__(self):
+        return 'Spacing({})'.format(
+            repr(self._ws) if self._ws != u' \t\n\r\f\v' else ''
+        )
+    def __str__(self): return '[{}]*'.format(repr(self._ws)[1:-1])
 
     def _scan(self, s, pos):
         ws = self._ws
@@ -207,6 +226,9 @@ class py_Spacing(py_Scanner):
 
 
 class py_Integer(py_Scanner):
+    def __repr__(self): return 'Integer()'
+    def __str__(self): return 'Integer'
+
     def _scan(self, s, pos):
         # [-+]? \d+
         if s[pos] in u'-+':
@@ -218,6 +240,9 @@ class py_Integer(py_Scanner):
 
 
 class py_Float(py_Scanner):
+    def __repr__(self): return 'Float()'
+    def __str__(self): return 'Float'
+
     def _scan(self, s, pos):
         # one of:
         #   [-+]? \d+\.\d* ([eE][-+]?\d+)?
@@ -254,9 +279,14 @@ class py_Float(py_Scanner):
 
 
 class py_BoundedString(py_Scanner):
-    def __init__(self, first, last):
+    def __init__(self, first, last, action=None):
+        self.action = action
         self.first = first
         self.last = last
+
+    def __repr__(self):
+        return 'BoundedString("{}", "{}")'.format(self.first, self.last)
+    def __str__(self): return 'BoundedString'
 
     def _scan(self, s, pos):
         a, b = self.first, self.last
@@ -273,10 +303,17 @@ class py_BoundedString(py_Scanner):
 
 
 class py_Bounded(py_Scanner):
-    def __init__(self, lhs, body, rhs):
+    def __init__(self, lhs, body, rhs, action=None):
+        self.action = action
         self._lhs = lhs
         self._body = body
         self._rhs = rhs
+
+    def __repr__(self):
+        return 'Bounded({}, {}, {})'.format(
+            repr(self._lhs), repr(self._body), repr(self._rhs)
+        )
+    def __str__(self): return 'Bounded'
 
     def _scan(self, s, pos):
         end = self._lhs._scan(s, pos)
@@ -305,9 +342,15 @@ class py_Bounded(py_Scanner):
 
 
 class py_Sequence(py_Scanner):
-    def __init__(self, *scanners):
+    def __init__(self, *scanners, action=None):
+        self.action = action
         self._scanners = scanners
         self.capturing = any(s.capturing for s in scanners)
+
+    def __repr__(self):
+        return 'Sequence({})'.format(', '.join(map(repr, self._scanners)))
+    def __str__(self):
+        return ' '.join(map(str, self._scanners))
 
     def _scan(self, s, pos):
         for scanner in self._scanners:
@@ -342,9 +385,15 @@ class py_Sequence(py_Scanner):
 
 
 class py_Choice(py_Scanner):
-    def __init__(self, *scanners):
+    def __init__(self, *scanners, action=None):
+        self.action = action
         self._scanners = scanners
         self.capturing = any(s.capturing for s in scanners)
+
+    def __repr__(self):
+        return 'Choice({})'.format(', '.join(map(repr, self._scanners)))
+    def __str__(self):
+        return ' | '.join(map(str, self._scanners))
 
     def _scan(self, s, pos):
         for scanner in self._scanners:
@@ -366,13 +415,25 @@ class py_Choice(py_Scanner):
 
 
 class py_Repeat(py_Scanner):
-    def __init__(self, scanner, min=0, max=-1, delimiter=None):
+    def __init__(self, scanner, min=0, max=-1, delimiter=None, action=None):
+        self.action = action
         self._scanner = scanner
         self._min = min
         self._max = max
         self._delimiter = delimiter
         self.capturing = (scanner.capturing or
                           (delimiter is not None and delimiter.capturing))
+
+    def __repr__(self):
+        return 'Repeat({}, min={}, max={}, delimiter={})'.format(
+            repr(self._scanner), self._min, self._max, repr(self._delimiter)
+        )
+    def __str__(self): return '{}{{{},{}{}}}'.format(
+        str(self._scanner),
+        self._min,
+        self._max,
+        ':' + str(self._delimiter) if self._delimiter is not None else ''
+    )
 
     def _scan(self, s, pos):
         scanner, delimiter = self._scanner, self._delimiter
@@ -444,7 +505,8 @@ class py_Repeat(py_Scanner):
 
 
 class py_Optional(py_Scanner):
-    def __init__(self, scanner, default=...):
+    def __init__(self, scanner, default=..., action=None):
+        self.action = action
         self._scanner = scanner
         if default is Ellipsis:
             self._default = [] if scanner.capturing else ''
@@ -452,9 +514,18 @@ class py_Optional(py_Scanner):
             self._default = default
         self.capturing = scanner.capturing
 
+    def __repr__(self): return 'Optional({})'.format(repr(self._scanner))
+    def __str__(self): return str(self._scanner) + '?'
+
     def _scan(self, s, pos):
         scanner = self._scanner
-        return scanner._scan(s, pos)
+        try:
+            end = scanner._scan(s, pos)
+            if end == NOMATCH:
+                end = pos
+        except IndexError:
+            end = pos
+        return end
 
     def match(self, s, pos=0):
         scanner = self._scanner
@@ -469,6 +540,9 @@ class py_Lookahead(py_Scanner):
     def __init__(self, scanner):
         self._scanner = scanner
 
+    def __repr__(self): return 'Lookahead({})'.format(repr(self._scanner))
+    def __str__(self): return '&' + str(self._scanner)
+
     def _scan(self, s, pos):
         scanner = self._scanner
         if scanner._scan(s, pos) == NOMATCH:
@@ -481,6 +555,10 @@ class py_NegativeLookahead(py_Scanner):
     def __init__(self, scanner):
         self._scanner = scanner
 
+    def __repr__(self):
+        return 'NegativeLookahead({})'.format(repr(self._scanner))
+    def __str__(self): return '!' + str(self._scanner)
+
     def _scan(self, s, pos):
         scanner = self._scanner
         if scanner._scan(s, pos) == NOMATCH:
@@ -490,9 +568,13 @@ class py_NegativeLookahead(py_Scanner):
 
 
 class py_Nonterminal(py_Scanner):
-    def __init__(self, grammar, name):
+    def __init__(self, grammar, name, action=None):
+        self.action = action
         self._grammar = grammar
         self._name = name
+
+    def __repr__(self): return 'Nonterminal(<dict>, "{}")'.format(self._name)
+    def __str__(self): return self._name
 
     def _scan(self, s, pos):
         scanner = self._grammar[self._name]
@@ -514,9 +596,13 @@ class py_Nonterminal(py_Scanner):
 
 class py_Group(py_Scanner):
     def __init__(self, scanner, action=None):
+        self.action = action
         self._scanner = scanner
         self.action = action
         self.capturing = True
+
+    def __repr__(self): return 'Group({})'.format(repr(self._scanner))
+    def __str__(self): return '({})'.format(str(self._scanner))
 
     def _scan(self, s, pos):
         scanner = self._scanner
