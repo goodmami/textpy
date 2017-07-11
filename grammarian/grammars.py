@@ -36,9 +36,9 @@ class Grammar(Scanner):
         scanner = self._grm[self.start]
         return scanner.scan(s, pos)
 
-    def match(self, s, pos=0):
+    def match(self, s, pos=0, trace=False):
         scanner = self._grm[self.start]
-        return scanner.match(s, pos)
+        return scanner.match(s, pos, trace=trace)
 
     def read(self, definition):
         d = self.GrammarReader.match(definition)

@@ -41,7 +41,6 @@ yet implemented, and not all features below have a function equivalent.
 
 | pattern      | description                                      |
 | ------------ | ------------------------------------------------ |
-| `X < ...`    | Rule `X` returns a list                          |
 | `X = ...`    | Rule `X` returns an item                         |
 | `.`          | dot; matches any single character                |
 | `"..."`      | string                                           |
@@ -50,7 +49,7 @@ yet implemented, and not all features below have a function equivalent.
 | `A B`        | `A` and `B` are a sequence                       |
 | `A | B`      | `A` and `B` are an ordered choice                |
 | `(...)`      | matching group                                   |
-| `(?:...)`    | non-matching group                               |
+| `(?:...)`    | non-matching group (not implemented)             |
 | `!A`         | negative lookahead on `A`                        |
 | `&A`         | positive lookahead on `A`                        |
 | `A?`         | optionally match `A`                             |
@@ -61,7 +60,7 @@ yet implemented, and not all features below have a function equivalent.
 | `A{:B}`      | match `A`s delimited by `B`s                     |
 | `A{n:B}`     | match *n* `A`s delimited by `B`s                 |
 | `A{m,n:B}`   | match between *m* and *n* `A`s delimited by `B`s |
-| `A ^`        | cut/ratchet after matching `A`                   |
+| `A ^`        | cut/ratchet after matching `A` (not implemented) |
 
 ## Special Symbols
 
@@ -97,25 +96,26 @@ ordered-choices. Here are some examples:
 | `(("a")":"("b")){:","}`   | `a:b,a:b` | `[['a','b'],['a','b']]`       |
 | `(("a")":"("b")){:(",")}` | `a:b,a:b` | `[['a','b'],[','],['a','b']]` |
 
-```python
->>> # "a"
->>> Literal('a').match('abc').value
-'a'
->>> # ("a")
->>> Group(Literal('a')).match('abc').value
-['a']
->>> # (("a"))
->>> Group(Group(Literal('a'))).match('abc').value
-[['a']]
->>> # "a" "b"
->>> Sequence(Literal('a'), Literal('b')).match('abc').value
-'ab'
->>> # ("a" "b") "c"
->>> Sequence(Group(Sequence(Literal('a'), Literal('b'))),
-...          Literal('c')).match('abc').value
-['ab']
->>> # "a" ("b") "c"
->>> Sequence(Literal('a'), Group(Literal('b')), Literal('c')) \
-...     .match('abc').value
-['b']
-```
+It would be nice if we could also get regex-style groups from matches,
+although initial tests show a marked slowdown, so this is still pending.
+
+| Pattern                   | Input     | Groups                        |
+| ------------------------- | --------- | ----------------------------- |
+| `"a"`                     | `abc`     | `[]`                          |
+| `("a")`                   | `abc`     | `['a']`                       |
+| `(("a"))`                 | `abc`     | `[['a']]`                     |
+| `"a" "b"`                 | `abc`     | `[]`                          |
+| `("a" "b") "c"`           | `abc`     | `['ab']`                      |
+| `"a" ("b") "c"`           | `abc`     | `['b']`                       |
+| `"a" / "b"`               | `a`       | `[]`                          |
+| ...                       | `b`       | `[]`                          |
+| `"a" / ("b")`             | `a`       | `[]`                          |
+| ...                       | `b`       | `['b']`                       |
+| `(("a")":"("b"))`         | `a:ba:b`  | `[['a','b']]`                 |
+| `(?:("a")":"("b"))*`      | `a:ba:b`  | `['a','b','a','b']`           |
+| `(("a")":"("b"))*`        | `a:ba:b`  | `[['a','b'],['a','b']]`       |
+| `(?:"a" ":" "b"){:","}`   | `a:b,a:b` | `[]`                          |
+| `("a" ":" "b"){:","}`     | `a:b,a:b` | `['a:b','a:b']`               |
+| `(("a")":"("b")){:","}`   | `a:b,a:b` | `[['a','b'],['a','b']]`       |
+| `(("a")":"("b")){:(",")}` | `a:b,a:b` | `[['a','b'],[','],['a','b']]` |
+

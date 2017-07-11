@@ -71,6 +71,10 @@ except ImportError:
 NOMATCH = -1
 EOS = -2
 
+NORMAL = 0
+CAPTURE = 1
+TRACE = 2
+
 
 class Match(object):
     def __init__(self, s, pos, endpos, value=None):
@@ -119,7 +123,7 @@ class py_Scanner(object):
         except IndexError:
             return NOMATCH
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         try:
             end = self._scan(s, pos)
             if end == NOMATCH:
@@ -132,6 +136,9 @@ class py_Scanner(object):
                 return Match(s, pos, end, val)
         except IndexError:
             return None
+
+    def match(self, s, pos=0, trace=False):
+        return self._match(s, pos, TRACE if trace else NORMAL)
 
 class py_Dot(py_Scanner):
     def __repr__(self): return 'Dot()'
@@ -323,21 +330,24 @@ class py_Bounded(py_Scanner):
                 end = self._rhs._scan(s, end)
         return end
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         end = self._lhs._scan(s, pos)
         m = None
         if end >= 0:
-            m = self._body.match(s, end)
+            m = self._body._match(s, end, mode)
             if m is not None:
                 end = self._rhs._scan(s, m.endpos)
                 if end < 0:
                     m = None
                 else:
-                    action = self.action
-                    if action is not None:
-                        m.value = action(m.value)
-                    m.pos = pos
-                    m.endpos = end
+                    if mode == TRACE:
+                        m = Match(s, pos, end, [m])
+                    else:
+                        action = self.action
+                        if action is not None:
+                            m.value = action(m.value)
+                        m.pos = pos
+                        m.endpos = end
         return m
 
 
@@ -359,16 +369,18 @@ class py_Sequence(py_Scanner):
                 break
         return pos
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         val = []
         end = pos
         for scanner in self._scanners:
-            if scanner.capturing:
-                m = scanner.match(s, end)
+            if mode == TRACE or scanner.capturing:
+                m = scanner._match(s, end, mode)
                 if m is None:
                     return None
                 end = m.endpos
-                if scanner.action is None:
+                if mode == TRACE:
+                    val.append(m)
+                elif scanner.action is None:
                     val.extend(m.value)
                 else:
                     val.append(m.value)
@@ -376,11 +388,12 @@ class py_Sequence(py_Scanner):
                 end = scanner._scan(s, end)
                 if end == NOMATCH:
                     return None
-        if not self.capturing:
-            val = s[pos:end]
-        action = self.action
-        if action is not None:
-            val = action(val)
+        if mode != TRACE:
+            if not self.capturing:
+                val = s[pos:end]
+            action = self.action
+            if action is not None:
+                val = action(val)
         return Match(s, pos, end, val)
 
 
@@ -402,14 +415,17 @@ class py_Choice(py_Scanner):
                 return endpos
         return NOMATCH
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         val = None
         for scanner in self._scanners:
-            m = scanner.match(s, pos)
+            m = scanner._match(s, pos, mode)
             if m is not None:
-                action = self.action
-                if action is not None:
-                    m.value = action(m.value)
+                if mode == TRACE:
+                    m = Match(s, pos, m.endpos, [m])
+                else:
+                    action = self.action
+                    if action is not None:
+                        m.value = action(m.value)
                 return m
         return None
 
@@ -457,7 +473,7 @@ class py_Repeat(py_Scanner):
             return pos
         return NOMATCH
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         scanner, delimiter = self._scanner, self._delimiter
         s_is_grp = scanner.capturing
         d_is_grp = delimiter.capturing if delimiter is not None else False
@@ -466,22 +482,26 @@ class py_Repeat(py_Scanner):
         val = []
         end = pos
         try:
-            m = scanner.match(s, end)
+            m = scanner._match(s, end, mode)
             while m is not None and count != b:
                 end = m.endpos
                 count += 1
-                if s_is_grp:
+                if mode == TRACE:
+                    val.append(m)
+                elif s_is_grp:
                     if scanner.action is None:
                         val.extend(m.value)
                     else:
                         val.append(m.value)
                 if delimiter is not None:
-                    if d_is_grp:
-                        m = delimiter.match(s, end)
+                    if mode == TRACE or d_is_grp:
+                        m = delimiter._match(s, end, mode)
                         if m is None:
                             break
                         d_end = m.endpos
-                        if delimiter.action is None:
+                        if mode == TRACE:
+                            val.append(m)
+                        elif delimiter.action is None:
                             val.extend(m.value)
                         else:
                             val.append(m.value)
@@ -489,17 +509,18 @@ class py_Repeat(py_Scanner):
                         d_end = delimiter._scan(s, end)
                         if d_end == NOMATCH:
                             break
-                    m = scanner.match(s, d_end)
+                    m = scanner._match(s, d_end, mode)
                 else:
-                    m = scanner.match(s, end)
+                    m = scanner._match(s, end, mode)
         except IndexError:
             pass
         if count >= a:
-            if not (s_is_grp or d_is_grp):
-                val = s[pos:end]
-            action = self.action
-            if action is not None:
-                val = action(val)
+            if mode != TRACE:
+                if not (s_is_grp or d_is_grp):
+                    val = s[pos:end]
+                action = self.action
+                if action is not None:
+                    val = action(val)
             return Match(s, pos, end, val)
         return None
 
@@ -527,10 +548,12 @@ class py_Optional(py_Scanner):
             end = pos
         return end
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         scanner = self._scanner
-        m = scanner.match(s, pos)
-        if m is None:
+        m = scanner._match(s, pos, mode)
+        if mode == TRACE:
+            return Match(s, pos, pos, [m])  # m could be None
+        elif m is None:
             return Match(s, pos, pos, self._default)
         else:
             return m
@@ -585,12 +608,16 @@ class py_Nonterminal(py_Scanner):
             )
         return scanner._scan(s, pos)
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         scanner = self._grammar[self._name]
-        m = scanner.match(s, pos)
-        action = self.action
-        if action is not None:
-            m.value = action(m.value)
+        m = scanner._match(s, pos, mode)
+        if m is not None:
+            if mode == TRACE:
+                m = Match(s, pos, m.endpos, [m])
+            else: 
+                action = self.action
+                if action is not None:
+                    m.value = action(m.value)
         return m
 
 
@@ -608,11 +635,13 @@ class py_Group(py_Scanner):
         scanner = self._scanner
         return scanner._scan(s, pos)
 
-    def match(self, s, pos=0):
+    def _match(self, s, pos, mode):
         scanner = self._scanner
-        m = scanner.match(s, pos)
+        m = scanner._match(s, pos, mode)
         if m is not None:
-            if self.action is None:
+            if mode == TRACE:
+                m = Match(s, pos, m.endpos, [m])
+            elif self.action is None:
                 m.value = [m.value]
             else:
                 m.value = self.action(m.value)

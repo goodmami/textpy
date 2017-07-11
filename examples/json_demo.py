@@ -108,29 +108,24 @@ Json2.update_actions(
     Integer=int
 )
 
+
 Json2b = Grammar(
     '''
     Start    = Object | Array
-    Object   = LBrace (Mapping (Comma Mapping)*)? RBrace
-    Mapping  = DQString Colon Value
-    Array    = LBracket (Value (Comma Value)*)? RBracket
+    Object   = /{\s*/ (Mapping (/\s*,\s*/ Mapping)*)? /\s*}/
+    Mapping  = DQString /\s*:\s*/ Value
+    Array    = /\[\s*/ (Value (/\s*,\s*/ Value)*)? /\s*\]/
     Value    = Object | Array | DQString
              | TrueVal | FalseVal | NullVal | Float | Integer
-    Spacing  = /\s*/
-    Comma    = "," Spacing
-    Colon    = ":" Spacing
-    LBrace   = "{" Spacing
-    RBrace   = "}" Spacing
-    LBracket = "[" Spacing
-    RBracket = "]" Spacing
-    TrueVal  = "true" Spacing
-    FalseVal = "false" Spacing
-    NullVal  = "null" Spacing
-    DQString = /\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"/ Spacing
-    Float    = /[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?/ Spacing
-    Integer  = /[-+]?\d+/ Spacing
+    TrueVal  = "true"
+    FalseVal = "false"
+    NullVal  = "null"
+    DQString = /\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"/
+    Float    = /[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?/
+    Integer  = /[-+]?\d+/
     '''
 )
+
 Json2c = Grammar(
     '''
     Start    = Object | Array
@@ -155,32 +150,48 @@ Json2c['Spacing'] = Spacing()
 
 Json2d = PEG(
     '''
-    Start        <- Object / Array
-    Object       <- OPENBRACE (KeyVal (COMMA KeyVal)*)? CLOSEBRACE
-    Array        <- OPENBRACKET (Value (COMMA Value)*)? CLOSEBRACKET
-    KeyVal       <- Key COLON Value
-    Key          <- DQSTRING Spacing
-    Value        <- (DQSTRING / Object / Array / Number / True / False / Null) Spacing
-    DQSTRING     <- ~"\\\"[^\\\"\\\\]*(?:\\\\.[^\\\"\\\\]*)*\\\"" Spacing
-    Number       <- Float / Int
-    Float        <- ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?" Spacing
-    Int          <- ~"[-+]?\d+" Spacing
-    True         <- 'true'
-    False        <- 'false'
-    Null         <- 'null'
-    OPENBRACE    <- '{' Spacing
-    CLOSEBRACE   <- '}' Spacing
-    OPENBRACKET  <- '[' Spacing
-    CLOSEBRACKET <- ']' Spacing
-    COMMA        <- ',' Spacing
-    COLON        <- ':' Spacing
-    Spacing      <- [ \t\n]*
+    Start    <- Object / Array
+    Object   <- "{" Spacing (Mapping (Spacing "," Spacing Mapping)*)? Spacing "}"
+    Mapping  <- DQString Spacing ":" Spacing Value
+    Array    <- "[" Spacing (Value (Spacing "," Spacing Value)*)? Spacing "]"
+    Value    <- Object / Array / DQString / TrueVal / FalseVal / NullVal / Float / Integer
+    TrueVal  <- "true"
+    FalseVal <- "false"
+    NullVal  <- "null"
+    DQString <- ~"\\\"[^\\\"\\\\]*(?:\\\\.[^\\\"\\\\]*)*\\\""
+    Float    <- ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?"
+    Integer  <- ~"[-+]?\d+"
+    Spacing  <- [ \t\n]*
     '''
 )
 
+# slower PEG version
+    # Start        <- Object / Array
+    # Object       <- OPENBRACE (KeyVal (COMMA KeyVal)*)? CLOSEBRACE
+    # Array        <- OPENBRACKET (Value (COMMA Value)*)? CLOSEBRACKET
+    # KeyVal       <- Key COLON Value
+    # Key          <- DQSTRING Spacing
+    # Value        <- (DQSTRING / Object / Array / Number / True / False / Null) Spacing
+    # DQSTRING     <- ~"\\\"[^\\\"\\\\]*(?:\\\\.[^\\\"\\\\]*)*\\\"" Spacing
+    # Number       <- Float / Int
+    # Float        <- ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?" Spacing
+    # Int          <- ~"[-+]?\d+" Spacing
+    # True         <- 'true'
+    # False        <- 'false'
+    # Null         <- 'null'
+    # OPENBRACE    <- '{' Spacing
+    # CLOSEBRACE   <- '}' Spacing
+    # OPENBRACKET  <- '[' Spacing
+    # CLOSEBRACKET <- ']' Spacing
+    # COMMA        <- ',' Spacing
+    # COLON        <- ':' Spacing
+    # Spacing      <- [ \t\n]*
+
+
 try:
     from parsimonious.grammar import Grammar
-    Json3 = Grammar(r'''
+    # much slower grammar
+    '''
         Start    = Object / Array
         Object   = LBrace (Mapping (Comma Mapping)*)? RBrace
         Mapping  = DQString Colon Value
@@ -200,6 +211,20 @@ try:
         DQString = ~"\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"" Spacing
         Float    = ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?" Spacing
         Integer  = ~"[-+]?\d+" Spacing
+    '''
+    Json3 = Grammar(r'''
+        Start    = Object / Array
+        Object   = ~"{\s*" (Mapping (~"\s*,\s*" Mapping)*)? ~"\s*}"
+        Mapping  = DQString ~"\s*:\s*" Value
+        Array    = ~"\[\s*" (Value (~"\s*,\s*" Value)*)? ~"\s*\]"
+        Value    = Object / Array / DQString
+                 / TrueVal / FalseVal / NullVal / Float / Integer
+        TrueVal  = "true"
+        FalseVal = "false"
+        NullVal  = "null"
+        DQString = ~"\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\""
+        Float    = ~"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?"
+        Integer  = ~"[-+]?\d+"
     ''')
 except ImportError:
     Json3 = None

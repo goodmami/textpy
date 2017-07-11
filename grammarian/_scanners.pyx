@@ -6,6 +6,11 @@ cpdef enum:
     NOMATCH = -1
     EOS = -2
 
+cpdef enum:
+    NORMAL = 0
+    CAPTURE = 1
+    TRACE = 2
+
 
 cdef class Match(object):
     cdef readonly unicode string
@@ -61,7 +66,7 @@ cdef class Scanner(object):
     cdef int _scan(self, unicode s, int pos) except EOS:
         return NOMATCH
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef int end
         cdef object action = self.action
         try:
@@ -69,21 +74,16 @@ cdef class Scanner(object):
             if end == NOMATCH:
                 return None
             else:
-                if action is not None:
-                    return Match(s, pos, end, action(s[pos:end]))
-                else:
+                if mode == TRACE or action is None:
                     return Match(s, pos, end, s[pos:end])
+                else:
+                    return Match(s, pos, end, action(s[pos:end]))
         except IndexError:
             return None
 
-    cpdef void set_grammar(self, object g):
-        if hasattr(self, '_scanner'):
-            self._scanner.set_grammar(g)
-        if hasattr(self, '_delimiter') and self._delimiter is not None:
-            self._delimiter.set_grammar(g)
-        if hasattr(self, '_scanners'):
-            for scanner in self._scanners:
-                scanner.set_grammar(g)
+    cpdef match(self, unicode s, int pos=0, bint trace=False):
+        return self._match(s, pos, TRACE if trace else NORMAL)
+
 
 
 cdef class Dot(Scanner):
@@ -258,22 +258,25 @@ cdef class Bounded(Scanner):
                 end = self._rhs._scan(s, end)
         return end
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef object action = self.action
         cdef Match m
         cdef int end = self._lhs._scan(s, pos)
         if end == NOMATCH:
             return None
-        m = self._body.match(s, end)
+        m = self._body._match(s, end, mode)
         if m is None:
             return None
         end = self._rhs._scan(s, m.endpos)
         if end == NOMATCH:
             return None
-        if action is not None:
-            m.value = action(m.value)
-        m.pos = pos
-        m.endpos = end
+        if mode == TRACE:
+            m = Match(s, pos, end, [m])
+        else:
+            if action is not None:
+                m.value = action(m.value)
+            m.pos = pos
+            m.endpos = end
         return m
 
 
@@ -293,7 +296,7 @@ cdef class Sequence(Scanner):
                 break
         return pos
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef object action = self.action
         cdef list vals = []
         cdef object val
@@ -301,12 +304,14 @@ cdef class Sequence(Scanner):
         cdef Scanner scanner
         cdef Match m
         for scanner in self._scanners:
-            if scanner.capturing:
-                m = scanner.match(s, end)
+            if mode == TRACE or scanner.capturing:
+                m = scanner._match(s, end, mode)
                 if m is None:
                     return None
                 end = m.endpos
-                if scanner.action is None:
+                if mode == TRACE:
+                    vals.append(m)
+                elif scanner.action is None:
                     vals.extend(m.value)
                 else:
                     vals.append(m.value)
@@ -314,12 +319,15 @@ cdef class Sequence(Scanner):
                 end = scanner._scan(s, end)
                 if end == NOMATCH:
                     return None
-        if not self.capturing:
-            val = s[pos:end]
-        else:
+        if mode == TRACE:
             val = vals
-        if action is not None:
-            val = action(val)
+        else:
+            if not self.capturing:
+                val = s[pos:end]
+            else:
+                val = vals
+            if action is not None:
+                val = action(val)
         return Match(s, pos, end, val)
 
 
@@ -340,15 +348,17 @@ cdef class Choice(Scanner):
                 return end
         return NOMATCH
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef object action = self.action
         cdef object val = None
         cdef Scanner scanner
         cdef Match m
         for scanner in self._scanners:
-            m = scanner.match(s, pos)
+            m = scanner._match(s, pos, mode)
             if m is not None:
-                if action is not None:
+                if mode == TRACE:
+                    m = Match(s, pos, m.endpos, [m])
+                elif action is not None:
                     m.value = action(m.value)
                 return m
         return None
@@ -392,7 +402,7 @@ cdef class Repeat(Scanner):
             return pos
         return NOMATCH
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef object action = self.action
         cdef Scanner scanner = self._scanner
         cdef Scanner delimiter = self._delimiter
@@ -403,22 +413,26 @@ cdef class Repeat(Scanner):
         cdef object val
         cdef Match m
         try:
-            m = scanner.match(s, end)
+            m = scanner._match(s, end, mode)
             while m is not None and count != b:
                 end = m.endpos
                 count += 1
-                if s_is_grp:
+                if mode == TRACE:
+                    vals.append(m)
+                elif s_is_grp:
                     if scanner.action is None:
                         vals.extend(m.value)
                     else:
                         vals.append(m.value)
                 if delimiter is not None:
-                    if d_is_grp:
-                        m = delimiter.match(s, end)
+                    if mode == TRACE or d_is_grp:
+                        m = delimiter._match(s, end, mode)
                         if m is None:
                             break
                         d_end = m.endpos
-                        if delimiter.action is None:
+                        if mode == TRACE:
+                            vals.append(m)
+                        elif delimiter.action is None:
                             vals.extend(m.value)
                         else:
                             vals.append(m.value)
@@ -426,18 +440,21 @@ cdef class Repeat(Scanner):
                         d_end = delimiter._scan(s, end)
                         if d_end == NOMATCH:
                             break
-                    m = scanner.match(s, d_end)
+                    m = scanner._match(s, d_end, mode)
                 else:
-                    m = scanner.match(s, end)
+                    m = scanner._match(s, end, mode)
         except IndexError:
             pass
         if count >= a:
-            if not (s_is_grp or d_is_grp):
-                val = s[pos:end]
-            else:
+            if mode == TRACE:
                 val = vals
-            if action is not None:
-                val = action(val)
+            else:
+                if not (s_is_grp or d_is_grp):
+                    val = s[pos:end]
+                else:
+                    val = vals
+                if action is not None:
+                    val = action(val)
             return Match(s, pos, end, val)
         return None
 
@@ -467,12 +484,14 @@ cdef class Optional(Scanner):
             end = pos
         return end
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef Scanner scanner = self._scanner
         cdef object default = self._default
         cdef Match m
-        m = scanner.match(s, pos)
-        if m is None:
+        m = scanner._match(s, pos, mode)
+        if mode == TRACE:
+            return Match(s, pos, pos, [m])  # m could be None
+        elif m is None:
             return Match(s, pos, pos, default)
         else:
             return m
@@ -523,16 +542,17 @@ cdef class Nonterminal(Scanner):
             )
         return scanner._scan(s, pos)
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef object action = self.action
         cdef Scanner scanner = self._grammar[self._name]
-        cdef Match m = scanner.match(s, pos)
-        if action is not None:
-            m.value = action(m.value)
+        cdef Match m = scanner._match(s, pos, mode)
+        if m is not None:
+            if mode == TRACE:
+                m = Match(s, pos, m.endpos, [m])
+            elif action is not None:
+                m.value = action(m.value)
         return m
 
-    cpdef void set_grammar(self, object g):
-        self._grammar = g
 
 cdef class Group(Scanner):
     cdef Scanner _scanner
@@ -546,13 +566,15 @@ cdef class Group(Scanner):
         cdef Scanner scanner = self._scanner
         return scanner._scan(s, pos)
 
-    cpdef Match match(self, unicode s, int pos=0):
+    cdef Match _match(self, unicode s, int pos, int mode):
         cdef Scanner scanner = self._scanner
         cdef object action = self.action
         cdef Match m
-        m = scanner.match(s, pos)
+        m = scanner._match(s, pos, mode)
         if m is not None:
-            if action is None:
+            if mode == TRACE:
+                m = Match(s, pos, m.endpos, [m])
+            elif action is None:
                 m.value = [m.value]
             else:
                 m.value = action(m.value)
