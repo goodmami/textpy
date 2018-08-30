@@ -3,6 +3,26 @@
 The Grammarian package is a collection of scanners
 for creating text parsers.
 
+## Build Instructions
+
+The Cython sources of Grammarian need to be compiled to be used. Make
+sure that Cython for Python 3 is installed (e.g., `apt install cython3`),
+as well as a C compiler like `gcc`. Run the following to build:
+
+    python3 setup.py build_ext --inplace
+
+You can then run the unit tests if `pytest` is installed for Python 3:
+
+    pytest-3
+
+Run the JSON demo for some benchmarks:
+
+    python3 -m examples.json_demo
+
+If [Parsimonious](https://github.com/erikrose/parsimonious) is also
+installed and importable by Python 3, then a Parsimonious-based benchmark
+will also run for comparison.
+
 ## Scanners
 
 Scanners "scan" the string for patterns and return the index where a
