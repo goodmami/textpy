@@ -1,7 +1,7 @@
 
-from grammarian.scanners import *
-from grammarian import io
-# from grammarian.scanners import Scanner, Nonterminal
+from textpy.scanners import *
+from textpy import io
+# from textpy.scanners import Scanner, Nonterminal
 
 class Grammar(Scanner):
     GrammarReader = io.GrammarReader

@@ -38,9 +38,9 @@ answer: http://stackoverflow.com/a/24519338/1441112
 
 '''
 
-from grammarian.scanners import *
-from grammarian.actions import constant
-from grammarian.grammars import Grammar, PEG
+from textpy.scanners import *
+from textpy.actions import constant
+from textpy.grammars import Grammar, PEG
 
 
 grm = {}
@@ -261,7 +261,7 @@ if __name__ == '__main__':
     assert Json2b.match(s) is not None
     import timeit
     print(
-        'grammarian (function composition)',
+        'textpy (function composition)',
         timeit.timeit(
             'Json.match(s)',
             setup='from __main__ import Json, s',
@@ -269,7 +269,7 @@ if __name__ == '__main__':
         )
     )
     print(
-        'grammarian (grammar definition)',
+        'textpy (grammar definition)',
         timeit.timeit(
             'Json2.match(s)',
             setup='from __main__ import Json2, s',
@@ -286,7 +286,7 @@ if __name__ == '__main__':
     )
 
     print(
-        'grammarian (grammar definition; alt grammar; scan only)',
+        'textpy (grammar definition; alt grammar; scan only)',
         timeit.timeit(
             'Json2b.scan(s)',
             setup='from __main__ import Json2b, s',
@@ -294,7 +294,7 @@ if __name__ == '__main__':
         )
     )
     print(
-        'grammarian (grammar definition; scan only)',
+        'textpy (grammar definition; scan only)',
         timeit.timeit(
             'Json2c.scan(s)',
             setup='from __main__ import Json2c, s',
@@ -302,7 +302,7 @@ if __name__ == '__main__':
         )
     )
     print(
-        'grammarian (peg; scan only)',
+        'textpy (peg; scan only)',
         timeit.timeit(
             'Json2d.scan(s)',
             setup='from __main__ import Json2d, s',

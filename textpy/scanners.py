@@ -28,7 +28,7 @@ __all__ = [
 ]
 
 try:
-    from grammarian._scanners import (
+    from textpy._scanners import (
         Scanner             as c_Scanner,
         Dot                 as c_Dot,
         CharacterClass      as c_CharacterClass,

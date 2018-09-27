@@ -1,7 +1,7 @@
 
 #!/usr/bin/env python3
 
-from grammarian import scanners
+from textpy import scanners
 
 NOMATCH = scanners.NOMATCH
 

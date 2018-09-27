@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from grammarian.io import (
+from textpy.io import (
     _Id,
     DotReader,
     SQLiteralReader,

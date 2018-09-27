@@ -1,11 +1,11 @@
-# Grammarian
+![TextPy Logo](logo.png)
 
-The Grammarian package is a collection of scanners
+The TextPy package is a collection of scanners
 for creating text parsers.
 
 ## Build Instructions
 
-The Cython sources of Grammarian need to be compiled to be used. Make
+The Cython sources of TextPy need to be compiled to be used. Make
 sure that Cython for Python 3 is installed (e.g., `apt install cython3`),
 as well as a C compiler like `gcc`. Run the following to build:
 

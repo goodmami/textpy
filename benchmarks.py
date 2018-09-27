@@ -1,15 +1,15 @@
 
 from timeit import timeit
 
-from grammarian import scanners
+from textpy import scanners
 
 def pycytime(scannernames, argstr, pattern):
     names = ['py_'+name for name in scannernames]
-    pysetup = 'from grammarian.scanners import {0}; f={1}({2}).scan; g={1}({2}).match'.format(
+    pysetup = 'from textpy.scanners import {0}; f={1}({2}).scan; g={1}({2}).match'.format(
         ','.join(names), names[0], argstr.format(*names)
     )
     names = ['c_'+name for name in scannernames]
-    cysetup = 'from grammarian.scanners import {0}; f={1}({2}).scan; g={1}({2}).match'.format(
+    cysetup = 'from textpy.scanners import {0}; f={1}({2}).scan; g={1}({2}).match'.format(
         ','.join(names), names[0], argstr.format(*names)
     )
     pyscan = timeit('f({})'.format(pattern), setup=pysetup, number=100000)

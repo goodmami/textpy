@@ -1,5 +1,5 @@
 
-from grammarian.scanners import *
+from textpy.scanners import *
 
 '''
 | `X = ...`    | Rule `X` returns an item                         |
